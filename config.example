@@ -1,0 +1,90 @@
+# vpn-eta configuration — copy to ~/.config/vpn-eta/config and edit.
+#
+# This file is sourced by the plugin as a shell fragment, so it is `NAME=value`,
+# one per line, quoted when the value has spaces. Everything here is optional;
+# delete a line to go back to the default shown.
+#
+# Why a file and not your shell profile: SwiftBar starts plugins from launchd,
+# which does not read ~/.zshrc or ~/.zprofile. A variable exported there reaches
+# a terminal run of the plugin and never reaches the menu bar. This file reaches
+# both. ($VPN_ETA_CONFIG points somewhere else if you prefer.)
+#
+# Watching two gateways: copy the plugin under a second name and give it a
+# config named after it. vpn-eta-lab.1m.sh reads vpn-eta-lab.config from this
+# directory if it exists, and this shared file otherwise — no edit to either
+# copy required.
+
+# ── Which VPN ────────────────────────────────────────────────────────────────
+
+# Which saved Cisco profile "Start new session" connects to. Only needed when
+# Cisco Secure Client has more than one — with a single profile the plugin uses
+# it. Accepts a profile name or a full URL, and is passed to Cisco untouched.
+#VPN_ETA_HOST="vpn.example.com"
+
+# Where the Cisco CLI lives, if it is not at one of the two standard paths
+# (/opt/cisco/secureclient/bin/vpn, then /opt/cisco/anyconnect/bin/vpn).
+#VPN_ETA_VPN_BIN="/opt/cisco/secureclient/bin/vpn"
+
+# ── What the menu bar shows ──────────────────────────────────────────────────
+
+# The word in front of the countdown. Worth changing if you run this plugin
+# twice against two gateways: "Work 6h 20m" and "Lab 2h 05m" beat two "VPN"s.
+# An emoji is the narrowest label there is, and an empty string removes the
+# label entirely — both are the lever to pull if the item is too wide.
+#   VPN_ETA_LABEL="VPN"   ->  VPN 6h 20m
+#   VPN_ETA_LABEL="🦍"    ->  🦍 6h 20m
+#   VPN_ETA_LABEL=""      ->  6h 20m
+#VPN_ETA_LABEL="VPN"
+
+# Drop the minutes from the MENU BAR while more than an hour is left: "6h"
+# rather than "6h 20m". Under an hour the minutes are the whole point, so they
+# stay. The menu itself always shows the exact figure. Rounds down, so the menu
+# bar never claims more time than you have.
+#   VPN_ETA_COMPACT=1     ->  🦍 6h   ... and 🦍 45m under the hour
+#VPN_ETA_COMPACT=
+
+# Countdown colour, in minutes remaining: red at or below the first, orange at
+# or below the second, green above. Separate from the notification marks below,
+# because a colour you glance at and an alert that interrupts you are not the
+# same decision.
+#VPN_ETA_CRITICAL_MINUTES=15
+#VPN_ETA_WARN_MINUTES=60
+
+# ── Notifications ────────────────────────────────────────────────────────────
+
+# Minutes-remaining marks that raise a notification, high to low. Each fires
+# once per session. Set to "" to switch notifications off entirely.
+#VPN_ETA_NOTIFY_MARKS="60 15"
+
+# ── Session log ──────────────────────────────────────────────────────────────
+
+# How many lines of history.log to keep.
+#VPN_ETA_HISTORY_LINES=500
+
+# Where the plugin keeps its state and log. The default is not the path below:
+# under SwiftBar it is the per-plugin data directory SwiftBar hands out,
+# ~/Library/Application Support/SwiftBar/Plugins/vpn-eta.1m.sh, and only a run
+# outside SwiftBar falls back to ~/Library/Application Support/vpn-eta. Set this
+# to make a terminal run and the menu bar share one history.
+# NOTE: ./uninstall.sh reads this, so a custom path is still cleaned up.
+#VPN_ETA_STATE_DIR="$HOME/Library/Application Support/vpn-eta"
+
+# ── Timing ───────────────────────────────────────────────────────────────────
+
+# Seconds to wait for the Cisco CLI before giving up on one call. The CLI talks
+# to a daemon and can hang; this is the watchdog.
+#VPN_ETA_TIMEOUT=12
+
+# How long a countdown extrapolated from the last confirmed reading stays
+# trustworthy, in minutes. Past this the plugin says it does not know rather
+# than showing a number it cannot stand behind.
+#VPN_ETA_STALE_LIMIT=45
+
+# Grace period, in seconds, during which a disconnect is treated as one you
+# asked for rather than a drop worth announcing.
+#VPN_ETA_TEARDOWN_GRACE=300
+
+# How long to wait for a freshly connected session to report its countdown:
+# attempts, and seconds between them.
+#VPN_ETA_CONNECT_ATTEMPTS=15
+#VPN_ETA_CONNECT_SLEEP=2

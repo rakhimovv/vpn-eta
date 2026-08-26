@@ -1,0 +1,81 @@
+name: Bug report
+description: Something in the menu bar, the installer or the start action is wrong
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Before you paste anything: redact your gateway.**
+
+        `install.sh --print-hosts`, the installer's output, your config file and the
+        `Start new session` terminal all contain your employer's real VPN hostname, and
+        usually your home directory. Replace them with `vpn.example.com` and `/Users/you`.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What the menu bar or the terminal showed, and what you expected instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: How to reproduce
+      placeholder: |
+        1. VPN was connected with about 3 hours left
+        2. Clicked "Start new session"
+        3. ...
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: vpn-eta version
+      description: "`swiftbar/vpn-eta.1m.sh --version`, or run it against the copy in your SwiftBar plugin folder"
+      placeholder: "vpn-eta 1.0.0"
+    validations:
+      required: true
+
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      placeholder: "15.6.1, Apple Silicon"
+    validations:
+      required: true
+
+  - type: input
+    id: swiftbar
+    attributes:
+      label: SwiftBar version
+      description: SwiftBar → About, or `defaults read /Applications/SwiftBar.app/Contents/Info.plist CFBundleShortVersionString`
+      placeholder: "2.1.1"
+    validations:
+      required: true
+
+  - type: input
+    id: cisco
+    attributes:
+      label: Cisco client version
+      description: "`/opt/cisco/secureclient/bin/vpn -v`"
+      placeholder: "5.1.x"
+
+  - type: textarea
+    id: plugin-output
+    attributes:
+      label: Plugin output
+      description: |
+        `swiftbar/vpn-eta.1m.sh` run in a terminal. **Redact the hostname and home path.**
+      render: text
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I redacted my gateway hostname and username from everything above
+          required: true
+        - label: I am on SwiftBar 2.1.0 or newer (older versions type the start command as keystrokes, which breaks on a non-Latin keyboard layout)

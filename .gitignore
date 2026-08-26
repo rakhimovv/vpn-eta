@@ -1,0 +1,6 @@
+.DS_Store
+*.log
+
+# CLAUDE.md is hidden by a global ignore rule on some machines; this repository
+# ships it on purpose, so opt back in explicitly.
+!CLAUDE.md

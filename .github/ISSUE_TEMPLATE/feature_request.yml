@@ -1,0 +1,30 @@
+name: Feature request
+description: Suggest something the tool should do
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Worth knowing up front: support for VPN clients other than Cisco Secure Client is
+        out of scope. The parsing, the session model and the reconnect handling are all
+        Cisco-shaped — another client would be a different tool, not a flag.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do
+      description: The situation, not the solution. What goes wrong today?
+    validations:
+      required: true
+
+  - type: textarea
+    id: idea
+    attributes:
+      label: What you have in mind
+      description: Optional. If it is a new setting, say what its default should be and why.
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you tried instead
+      description: Existing settings, another tool, doing it by hand.

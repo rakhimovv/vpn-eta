@@ -1,0 +1,612 @@
+#!/bin/bash
+# Fixture tests for vpn-eta.1m.sh. Run: ./vpn-eta.test.sh
+set -u
+
+# The tests live outside swiftbar/ on purpose: SwiftBar runs every executable
+# file in its plugin folder — and chmods them executable itself — so a test
+# script parked next to the plugin gets loaded as one.
+PLUGIN=$(dirname "$0")/../swiftbar/vpn-eta.1m.sh
+STATE_DIR=$(mktemp -d -t vpn-eta-test)
+trap 'rm -rf "$STATE_DIR"' EXIT
+export SWIFTBAR_PLUGIN_DATA_PATH=$STATE_DIR
+# Set for every test, not just the notification ones: a suite that can reach the
+# real notification centre would interrupt whoever runs it.
+export VPN_ETA_NOTIFY_SINK=$STATE_DIR/notifications
+# Whoever runs the suite probably uses the plugin too, and their own config would
+# otherwise decide what these assertions are measuring. /dev/null is readable and
+# sources to nothing, so the plugin takes its documented defaults.
+export VPN_ETA_CONFIG=/dev/null
+
+pass=0
+fail=0
+
+check() {
+	name=$1
+	expected=$2
+	actual=$3
+	if [ "$actual" = "$expected" ]; then
+		pass=$((pass + 1))
+	else
+		fail=$((fail + 1))
+		echo "FAIL: $name"
+		echo "  expected: $expected"
+		echo "  actual:   $actual"
+	fi
+}
+
+first_line() { printf '%s\n' "$1" | head -1; }
+
+# The plugin is copied out of the repository, so its own VERSION is the only
+# provenance an installed copy has — and the bug-report template asks for it.
+# Drift between it and the CHANGELOG is silent otherwise.
+version_line=$("$PLUGIN" --version)
+check "the plugin reports a version" "vpn-eta" "${version_line% *}"
+changelog_version=$(awk '/^## \[/ { gsub(/[^0-9.]/, "", $2); print $2; exit }' \
+	"$(dirname "$0")/../CHANGELOG.md")
+check "and it matches the newest CHANGELOG entry" "vpn-eta $changelog_version" "$version_line"
+
+CONNECTED='[ Connection Information ]
+
+    Connection State:            Connected
+    Duration:                    21:08:38
+    Session Disconnect:          2 Hours 51 Minutes Remaining
+
+[ Address Information ]
+
+    Client Address (IPv4):       10.3.3.3'
+
+CONNECTED_NO_COUNTDOWN='[ Connection Information ]
+
+    Connection State:            Connected
+    Duration:                    00:04:12
+
+[ Address Information ]
+
+    Client Address (IPv4):       10.3.3.3'
+
+DISCONNECTED='[ Connection Information ]
+
+    Connection State:            Disconnected'
+
+# What the client prints when the CLI never attaches to the daemon: a banner and
+# nothing else. This is the read that used to render as a confident "VPN off".
+# The version is deliberately a round placeholder — nothing here should hint at
+# which build any particular organisation deploys.
+NOT_ATTACHED='Cisco Secure Client (version 5.1.0.0) release.
+
+Copyright (c) 2004 - 2025, Cisco Systems, Inc. All rights reserved.
+
+  >> state: Unknown
+VPN>'
+
+out=$(VPN_ETA_TEST_STATS=$CONNECTED "$PLUGIN")
+check "connected shows the countdown" "VPN 2h 51m | color=green" "$(first_line "$out")"
+
+out=$(VPN_ETA_TEST_STATS='    Connection State:            Connected
+    Session Disconnect:          58 Minutes Remaining' "$PLUGIN")
+check "under an hour turns orange" "VPN 58m | color=orange" "$(first_line "$out")"
+
+out=$(VPN_ETA_TEST_STATS='    Connection State:            Connected
+    Session Disconnect:          11 Minutes Remaining' "$PLUGIN")
+check "the last quarter hour turns red" "VPN 11m | color=red" "$(first_line "$out")"
+
+out=$(VPN_ETA_TEST_STATS='    Connection State:            Connected
+    Session Disconnect:          1 Day 3 Hours 5 Minutes Remaining' "$PLUGIN")
+check "days are formatted" "VPN 1d 3h | color=green" "$(first_line "$out")"
+
+rm -f "$STATE_DIR/last-session"
+out=$(VPN_ETA_TEST_STATS=$CONNECTED_NO_COUNTDOWN "$PLUGIN")
+check "connected without a countdown is not off" "VPN on | color=green" "$(first_line "$out")"
+
+# The regression this pair guards: Cisco intermittently drops Session Disconnect
+# from an otherwise healthy reply, which used to blank the number out for that
+# whole refresh even though a good reading was sitting in the cache.
+seed_cache() {
+	printf 'epoch=%s\nminutes=%s\naddress=%s\n' "$(($(date +%s) - $1))" "$2" "$3" \
+		>"$STATE_DIR/last-session"
+}
+
+seed_cache 600 180 10.3.3.3
+out=$(VPN_ETA_TEST_STATS=$CONNECTED_NO_COUNTDOWN "$PLUGIN")
+check "a dropped countdown is extrapolated" "VPN 2h 50m | color=green" "$(first_line "$out")"
+
+# A different address is a different session, so its deadline says nothing.
+seed_cache 600 180 10.0.0.1
+out=$(VPN_ETA_TEST_STATS=$CONNECTED_NO_COUNTDOWN "$PLUGIN")
+check "a cache from another session is not extrapolated" "VPN on | color=green" "$(first_line "$out")"
+
+seed_cache 7200 180 10.3.3.3
+out=$(VPN_ETA_TEST_STATS=$CONNECTED_NO_COUNTDOWN "$PLUGIN")
+check "a stale cache is not extrapolated" "VPN on | color=green" "$(first_line "$out")"
+rm -f "$STATE_DIR/last-session"
+
+# A field that is present but not a countdown lands in the same branch as a
+# missing one. Print what the client sent, so the two stay tellable apart.
+CONNECTED_ODD_COUNTDOWN='[ Connection Information ]
+
+    Connection State:            Connected
+    Session Disconnect:          Not Available
+
+[ Address Information ]
+
+    Client Address (IPv4):       10.3.3.3'
+
+out=$(VPN_ETA_TEST_STATS=$CONNECTED_ODD_COUNTDOWN "$PLUGIN")
+check "a non-countdown value is quoted back" "Session Disconnect: Not Available" \
+	"$(printf '%s\n' "$out" | sed -n '4s/ | .*//p')"
+out=$(VPN_ETA_TEST_STATS=$CONNECTED_NO_COUNTDOWN "$PLUGIN")
+check "a missing field says so instead" "No session countdown reported" \
+	"$(printf '%s\n' "$out" | sed -n '4s/ | .*//p')"
+
+out=$(VPN_ETA_TEST_STATS=$DISCONNECTED "$PLUGIN")
+check "a reported disconnect is off" "VPN off | color=gray" "$(first_line "$out")"
+
+# The regression: an unreadable reply must never claim the VPN is off while a
+# tunnel is up. With no cache and no tunnel to corroborate, it must say unknown
+# only if a tunnel exists — so assert on which branch was taken, not the host.
+rm -f "$STATE_DIR/last-session"
+out=$(VPN_ETA_TEST_STATS=$NOT_ATTACHED "$PLUGIN")
+case $(first_line "$out") in
+"VPN ? | color=orange")
+	check "unreadable with a tunnel up says unknown" \
+		"A tunnel is up but the session could not be read" \
+		"$(printf '%s\n' "$out" | sed -n '3s/ | .*//p')"
+	;;
+"VPN off | color=gray")
+	check "unreadable with no tunnel may say off" \
+		"No tunnel interface and no readable session" \
+		"$(printf '%s\n' "$out" | sed -n '3s/ | .*//p')"
+	;;
+*)
+	fail=$((fail + 1))
+	echo "FAIL: unreadable reply produced an unexpected first line: $(first_line "$out")"
+	;;
+esac
+
+out=$(VPN_ETA_TEST_STATS=$CONNECTED VPN_ETA_TEST_RC=1 "$PLUGIN")
+case $(first_line "$out") in
+"VPN ? | color=orange" | "VPN off | color=gray") pass=$((pass + 1)) ;;
+*)
+	fail=$((fail + 1))
+	echo "FAIL: a nonzero exit produced: $(first_line "$out")"
+	;;
+esac
+
+# A stale countdown is extrapolated only while the cached address is still bound
+# to a utun, so seed the cache with the address this host actually has.
+addr=$(ifconfig 2>/dev/null | awk '
+	/^[a-z0-9]+:/ { iface = $1 }
+	$1 == "inet" && iface ~ /^utun/ { print $2; exit }
+')
+if [ -n "$addr" ]; then
+	printf 'epoch=%s\nminutes=180\naddress=%s\n' "$(($(date +%s) - 600))" "$addr" \
+		>"$STATE_DIR/last-session"
+	out=$(VPN_ETA_TEST_STATS=$NOT_ATTACHED "$PLUGIN")
+	check "a live tunnel keeps the countdown alive" "VPN 2h 50m | color=green" "$(first_line "$out")"
+
+	printf 'epoch=%s\nminutes=180\naddress=%s\n' "$(($(date +%s) - 7200))" "$addr" \
+		>"$STATE_DIR/last-session"
+	out=$(VPN_ETA_TEST_STATS=$NOT_ATTACHED "$PLUGIN")
+	check "a cache past the staleness limit is dropped" "VPN ? | color=orange" "$(first_line "$out")"
+else
+	echo "skip: no utun interface, cannot test the stale-countdown fallback"
+fi
+
+# A real disconnect must clear the cache so it cannot resurface later.
+printf 'epoch=%s\nminutes=180\naddress=%s\n' "$(date +%s)" "10.0.0.1" \
+	>"$STATE_DIR/last-session"
+VPN_ETA_TEST_STATS=$DISCONNECTED "$PLUGIN" >/dev/null
+if [ -e "$STATE_DIR/last-session" ]; then
+	fail=$((fail + 1))
+	echo "FAIL: a reported disconnect left the cache in place"
+else
+	pass=$((pass + 1))
+fi
+
+# Both actions carried the ↻ glyph and sat next to each other, so an instant
+# reread and a tear-down-plus-SMS-reauth read as the same kind of button.
+out=$(VPN_ETA_TEST_STATS=$CONNECTED "$PLUGIN")
+start_glyph=$(printf '%s\n' "$out" | grep 'param0=start' | awk '{print $1}')
+refresh_glyph=$(printf '%s\n' "$out" | grep 'refresh=true' | grep -v 'param0=start' | awk '{print $1}')
+check "the session action does not wear the refresh glyph" "false" \
+	"$([ "$start_glyph" = "$refresh_glyph" ] && echo true || echo false)"
+check "the reread says what it does not touch" \
+	"Re-reads the client; the VPN session is left alone" \
+	"$(printf '%s\n' "$out" | grep 'Re-reads' | sed 's/ | .*//')"
+start_at=$(printf '%s\n' "$out" | grep -n 'param0=start' | cut -d: -f1)
+refresh_at=$(printf '%s\n' "$out" | grep -n 'refresh=true' | grep -v 'param0=start' | cut -d: -f1)
+check "the cheap action comes first" "true" \
+	"$([ "$refresh_at" -lt "$start_at" ] && echo true || echo false)"
+
+# ---------------------------------------------------------------------------
+# The start path: it disconnects and reconnects a live VPN, so it is exercised
+# against a fake client rather than Cisco's. VPN_ETA_VPN_BIN is the only reason
+# that override exists.
+
+FAKE_DIR=$STATE_DIR/fake
+mkdir -p "$FAKE_DIR"
+export FAKE_VPN_DIR=$FAKE_DIR
+cat >"$FAKE_DIR/vpn" <<'FAKE'
+#!/bin/bash
+# Stands in for /opt/cisco/secureclient/bin/vpn. Records every call, and answers
+# `stats` from whichever fixture the current state names.
+printf '%s\n' "$*" >>"$FAKE_VPN_DIR/log"
+case ${1-} in
+hosts) cat "$FAKE_VPN_DIR/hosts" ;;
+stats) cat "$FAKE_VPN_DIR/$(cat "$FAKE_VPN_DIR/state").stats" ;;
+connect)
+	printf '%s\n' "${FAKE_VPN_AFTER_CONNECT:-connected}" >"$FAKE_VPN_DIR/state"
+	exit "${FAKE_VPN_CONNECT_RC:-0}"
+	;;
+disconnect) printf 'disconnected\n' >"$FAKE_VPN_DIR/state" ;;
+esac
+FAKE
+chmod +x "$FAKE_DIR/vpn"
+
+printf '    [hosts]:\n\n    > gw.example.com\n' >"$FAKE_DIR/hosts"
+printf '    Connection State:            Disconnected\n' >"$FAKE_DIR/disconnected.stats"
+printf '    Connection State:            Connected\n    Session Disconnect:          23 Hours 59 Minutes Remaining\n    Client Address (IPv4):       10.9.9.9\n' >"$FAKE_DIR/connected.stats"
+printf '    Connection State:            Connected\n    Session Disconnect:          Not Available\n' >"$FAKE_DIR/nocountdown.stats"
+
+# Runs the start path with the fake client. $1 is the answer piped to the
+# prompt, $2 the state the fake starts in; the rest are extra environment.
+run_start() {
+	answer=$1
+	printf '%s\n' "$2" >"$FAKE_DIR/state"
+	: >"$FAKE_DIR/log"
+	shift 2
+	printf '%s\n' "$answer" | env "$@" \
+		VPN_ETA_VPN_BIN="$FAKE_DIR/vpn" \
+		VPN_ETA_CONNECT_ATTEMPTS=2 VPN_ETA_CONNECT_SLEEP=0 \
+		"$PLUGIN" start
+}
+
+seed_cache 60 500 10.9.9.9
+out=$(run_start n connected)
+start_rc=$?
+# The prompt has no trailing newline, so the reply lands on the prompt's line.
+check "declining leaves the session alone" "Cancelled; the VPN session was not changed." \
+	"$(printf '%s\n' "$out" | tail -1 | sed 's/^Continue? \[Y\/n\] //')"
+check "declining is not an error" "0" "$start_rc"
+check "declining runs no connect" "" "$(grep -c '^connect' "$FAKE_DIR/log" | tr -d ' ' | sed 's/^0$//')"
+
+# Enter is the answer the prompt already assumes, and the only reason the prompt
+# is still there is that a live session is about to go.
+seed_cache 60 500 10.9.9.9
+out=$(run_start "" connected)
+check "an empty answer accepts" \
+	"New VPN session established: 23 Hours 59 Minutes Remaining." \
+	"$(printf '%s\n' "$out" | tail -1)"
+
+# Nothing to lose, nothing to ask: the click was the confirmation.
+out=$(run_start "" disconnected)
+check "no session means no prompt at all" "" \
+	"$(printf '%s\n' "$out" | grep -c 'Continue?' | sed 's/^0$//')"
+check "and it starts anyway" "connect gw.example.com" "$(grep '^connect' "$FAKE_DIR/log")"
+
+# An unanswerable prompt is not a yes: EOF must not tear a live session down.
+seed_cache 60 500 10.9.9.9
+printf 'connected\n' >"$FAKE_DIR/state"
+: >"$FAKE_DIR/log"
+out=$(env VPN_ETA_VPN_BIN="$FAKE_DIR/vpn" VPN_ETA_CONNECT_ATTEMPTS=2 VPN_ETA_CONNECT_SLEEP=0 \
+	"$PLUGIN" start </dev/null)
+check "a prompt at EOF cancels" "Cancelled; the VPN session was not changed." \
+	"$(printf '%s\n' "$out" | tail -1 | sed 's/^Continue? \[Y\/n\] //')"
+check "and disconnects nothing" "0" "$(grep -c '^disconnect' "$FAKE_DIR/log" | tr -d ' ')"
+
+out=$(run_start y disconnected)
+check "a fresh start reports the new countdown" \
+	"New VPN session established: 23 Hours 59 Minutes Remaining." \
+	"$(printf '%s\n' "$out" | tail -1)"
+check "a fresh start does not disconnect first" "0" "$(grep -c '^disconnect' "$FAKE_DIR/log" | tr -d ' ')"
+check "a fresh start connects the saved host" "connect gw.example.com" \
+	"$(grep '^connect' "$FAKE_DIR/log")"
+
+seed_cache 60 500 10.9.9.9
+out=$(run_start y connected)
+check "an active session is torn down first" "1" "$(grep -c '^disconnect' "$FAKE_DIR/log" | tr -d ' ')"
+check "and replaced by a new one" \
+	"New VPN session established: 23 Hours 59 Minutes Remaining." \
+	"$(printf '%s\n' "$out" | tail -1)"
+
+# The regression this guards: a connect that returns without a countdown used to
+# leave the previous session's deadline cached. The address cannot veto it —
+# a gateway may hand the same one back — so the cache has to go at teardown.
+seed_cache 60 500 10.9.9.9
+out=$(run_start y connected FAKE_VPN_AFTER_CONNECT=nocountdown)
+start_rc=$?
+check "a connect without a countdown is an error" "1" "$start_rc"
+if [ -e "$STATE_DIR/last-session" ]; then
+	fail=$((fail + 1))
+	echo "FAIL: a replaced session left its old countdown in the cache"
+else
+	pass=$((pass + 1))
+fi
+
+# Several saved profiles: the plugin must not guess which network you meant.
+printf '    [hosts]:\n\n    > gw.example.com\n    > gw2.example.com\n' >"$FAKE_DIR/hosts"
+out=$(run_start "" disconnected)
+start_rc=$?
+check "several saved hosts are refused" \
+	"Cisco Secure Client has 2 saved profiles, so this needs telling which one:" \
+	"$(first_line "$out")"
+check "and refusing is an error" "1" "$start_rc"
+check "and nothing was connected" "0" "$(grep -c '^connect' "$FAKE_DIR/log" | tr -d ' ')"
+check "and both are named, so choosing is a copy" "gw.example.com gw2.example.com" \
+	"$(printf '%s\n' "$out" | awk '/^    gw/ { printf "%s%s", sep, $1; sep = " " }')"
+check "and the config line is spelled out" 'VPN_ETA_HOST="gw.example.com"' \
+	"$(printf '%s\n' "$out" | awk '/VPN_ETA_HOST=/ { $1 = $1; print; exit }')"
+
+# ... and with one configured, several saved profiles stop being a problem.
+out=$(run_start "" disconnected VPN_ETA_HOST=gw2.example.com)
+check "a configured host is used as given" "connect gw2.example.com" \
+	"$(grep '^connect' "$FAKE_DIR/log")"
+check "and the countdown comes back" \
+	"New VPN session established: 23 Hours 59 Minutes Remaining." \
+	"$(printf '%s\n' "$out" | tail -1)"
+
+# A configured host is passed through untouched, so a full URL works where a
+# profile name would not — Cisco accepts either.
+out=$(run_start "" disconnected VPN_ETA_HOST=https://vpn.example.org/group)
+check "a URL is passed through untouched" "connect https://vpn.example.org/group" \
+	"$(grep '^connect' "$FAKE_DIR/log")"
+
+# No profiles at all is a different failure from too many, and says so.
+printf '    [hosts]:\n\n' >"$FAKE_DIR/hosts"
+out=$(run_start "" disconnected)
+start_rc=$?
+check "no saved hosts is its own message" \
+	"Cisco Secure Client has no saved VPN profiles to connect to." \
+	"$(first_line "$out")"
+check "and that is an error too" "1" "$start_rc"
+
+printf '    [hosts]:\n\n    > gw.example.com\n' >"$FAKE_DIR/hosts"
+
+# SwiftBar refreshes the item when it is CLICKED — before the old tunnel is even
+# down. Without a nudge at the end, a brand new session sits behind a stale
+# "VPN off" until the next scheduled minute, which is what sent a user hunting
+# for the Refresh item by hand.
+REFRESH_SINK=$STATE_DIR/refreshes
+: >"$REFRESH_SINK"
+run_start "" disconnected SWIFTBAR=1 SWIFTBAR_PLUGIN_PATH=/somewhere/vpn-eta.1m.sh \
+	VPN_ETA_REFRESH_SINK="$REFRESH_SINK" >/dev/null
+# SwiftBar names a plugin by the part before the first dot. The full filename is
+# accepted and matches nothing, so the wrong form fails silently — this assertion
+# is the only thing standing between that and a fix that does nothing.
+check "a finished start asks SwiftBar to read again" \
+	"swiftbar://refreshplugin?name=vpn-eta" "$(tail -1 "$REFRESH_SINK")"
+
+# A connect that failed also leaves the menu bar describing a world that is gone.
+: >"$REFRESH_SINK"
+run_start "" connected SWIFTBAR=1 SWIFTBAR_PLUGIN_PATH=/somewhere/vpn-eta.1m.sh \
+	VPN_ETA_REFRESH_SINK="$REFRESH_SINK" FAKE_VPN_AFTER_CONNECT=nocountdown >/dev/null
+check "and so does a failed one" "1" "$(grep -c . "$REFRESH_SINK" | tr -d ' ')"
+
+# Outside SwiftBar there is nothing to refresh, so no URL is opened.
+: >"$REFRESH_SINK"
+run_start "" disconnected VPN_ETA_REFRESH_SINK="$REFRESH_SINK" >/dev/null
+check "a terminal run opens no URL" "0" "$(grep -c . "$REFRESH_SINK" | tr -d ' ')"
+
+printf '    [hosts]:\n\n    > gw.example.com\n' >"$FAKE_DIR/hosts"
+
+# ---------------------------------------------------------------------------
+# Warnings before a session ends, and the log of how one ended. Both write to
+# STATE_DIR, which a fixture run refuses to do until VPN_ETA_TEST_PERSIST says
+# the state dir is a throwaway.
+
+NOTIFY_SINK=$VPN_ETA_NOTIFY_SINK
+
+stats_for() {
+	printf '    Connection State:            Connected\n'
+	printf '    Session Disconnect:          %s\n' "$1"
+	printf '    Client Address (IPv4):       %s\n' "${2:-10.1.1.1}"
+}
+
+run_live() { VPN_ETA_TEST_STATS=$1 VPN_ETA_TEST_PERSIST=1 "$PLUGIN" >/dev/null; }
+
+# ---------------------------------------------------------------------------
+# The menu bar is the scarcest space on the screen, so it formats independently
+# of the dropdown: compact drops the minutes only while an hour or more is left.
+
+bar_line() {
+	# $1 remaining text, rest environment. Prints just the menu-bar line.
+	remaining=$1
+	shift
+	env "$@" VPN_ETA_TEST_STATS="$(stats_for "$remaining")" "$PLUGIN" | head -1 | sed 's/ |.*//'
+}
+
+check "the menu bar shows hours and minutes by default" "VPN 23h 53m" \
+	"$(bar_line '23 Hours 53 Minutes Remaining')"
+check "compact drops the minutes above an hour" "VPN 23h" \
+	"$(bar_line '23 Hours 53 Minutes Remaining' VPN_ETA_COMPACT=1)"
+# Under an hour the minutes are the whole point, so compact keeps them.
+check "compact keeps the minutes below an hour" "VPN 45m" \
+	"$(bar_line '45 Minutes Remaining' VPN_ETA_COMPACT=1)"
+check "compact rounds down, never claiming time you do not have" "VPN 1h" \
+	"$(bar_line '1 Hours 59 Minutes Remaining' VPN_ETA_COMPACT=1)"
+# An empty label is a real choice, not a missing value, so it must survive the
+# default — and must not leave a leading space behind.
+check "an empty label leaves no stray space" "23h" \
+	"$(bar_line '23 Hours 53 Minutes Remaining' VPN_ETA_COMPACT=1 VPN_ETA_LABEL=)"
+check "and a custom label is used verbatim" "Lab 23h 53m" \
+	"$(bar_line '23 Hours 53 Minutes Remaining' VPN_ETA_LABEL=Lab)"
+# An emoji is the narrowest label there is, and it is multi-byte — the plugin
+# must pass it through untouched rather than counting or trimming characters.
+check "an emoji label survives intact" "🦍 23h" \
+	"$(bar_line '23 Hours 53 Minutes Remaining' VPN_ETA_COMPACT=1 VPN_ETA_LABEL=🦍)"
+
+# Two gateways in one menu bar: a copy under a different filename must find its
+# own config without anyone editing the copy, because there is nowhere to set a
+# per-plugin environment variable under launchd.
+multi_dir=$STATE_DIR/multi
+mkdir -p "$multi_dir/cfg/vpn-eta" "$multi_dir/plugins"
+cp "$PLUGIN" "$multi_dir/plugins/vpn-eta-lab.1m.sh"
+cp "$PLUGIN" "$multi_dir/plugins/vpn-eta.1m.sh"
+printf 'VPN_ETA_LABEL="Lab"\nVPN_ETA_COMPACT=1\n' >"$multi_dir/cfg/vpn-eta/vpn-eta-lab.config"
+printf 'VPN_ETA_LABEL="Work"\n' >"$multi_dir/cfg/vpn-eta/config"
+multi_bar() {
+	env -u VPN_ETA_CONFIG XDG_CONFIG_HOME="$multi_dir/cfg" \
+		VPN_ETA_TEST_STATS="$(stats_for '23 Hours 53 Minutes Remaining')" \
+		"$multi_dir/plugins/$1" | head -1 | sed 's/ |.*//'
+}
+check "a renamed copy reads its own config" "Lab 23h" "$(multi_bar vpn-eta-lab.1m.sh)"
+check "and the original still reads the shared one" "Work 23h 53m" "$(multi_bar vpn-eta.1m.sh)"
+# The dropdown is not short of space and keeps the exact number.
+check "the dropdown keeps the full countdown under compact" "🔐  23h 53m remaining" \
+	"$(env VPN_ETA_COMPACT=1 VPN_ETA_TEST_STATS="$(stats_for '23 Hours 53 Minutes Remaining')" \
+		"$PLUGIN" | sed -n '3p' | sed 's/ |.*//')"
+
+
+reset_session_state() {
+	rm -f "$STATE_DIR/last-session" "$STATE_DIR/last-event" \
+		"$STATE_DIR/history.log" "$STATE_DIR/expected-teardown" "$NOTIFY_SINK"
+}
+
+notifications() {
+	[ -f "$NOTIFY_SINK" ] || { echo 0; return; }
+	wc -l <"$NOTIFY_SINK" | tr -d ' '
+}
+
+last_notification() { tail -1 "$NOTIFY_SINK" 2>/dev/null | cut -f1; }
+history_lines() { wc -l <"$STATE_DIR/history.log" 2>/dev/null | tr -d ' '; }
+last_event() { awk -F'\t' 'END { print $2 }' "$STATE_DIR/history.log" 2>/dev/null; }
+
+# ---------------------------------------------------------------------------
+# Cisco between states is not a session ending. A reconnect is the single most
+# ordinary thing that happens to a laptop VPN, and the whole premise of this
+# plugin is that it does not call an ambiguous reading a disconnect.
+
+for transient in Connecting Reconnecting Disconnecting; do
+	reset_session_state
+	seed_cache 600 180 10.1.1.1
+	out=$(VPN_ETA_TEST_STATS="    Connection State:            $transient" \
+		VPN_ETA_TEST_PERSIST=1 "$PLUGIN")
+
+	check "$transient does not render as off" "false" \
+		"$(printf '%s\n' "$out" | head -1 | grep -q 'off' && echo true || echo false)"
+	# The deadline did not move because the tunnel is renegotiating, so the
+	# countdown must survive rather than be thrown away and re-learned.
+	check "$transient keeps the cached countdown" "VPN 2h 50m" \
+		"$(printf '%s\n' "$out" | head -1 | sed 's/ |.*//')"
+	check "$transient says what is happening" "${transient}…" \
+		"$(printf '%s\n' "$out" | awk -F' \\| ' '/…/ { print $1; exit }' | sed 's/^.*🔐  //')"
+	# The regression that matters most: a false "VPN disconnected" alert.
+	check "$transient raises no drop notification" "0" "$(notifications)"
+	# And the cache must still be there for the next run.
+	check "$transient does not clear the session cache" "true" \
+		"$([ -e "$STATE_DIR/last-session" ] && echo true || echo false)"
+	check "$transient still offers to tear the session down" "true" \
+		"$(printf '%s\n' "$out" | grep -q 'Disconnects the current session first' && echo true || echo false)"
+done
+
+# A real disconnect must still be called one — the fix above must not have
+# swallowed the case the plugin exists to report.
+reset_session_state
+run_live "$(stats_for '3 Hours 0 Minutes Remaining')"
+out=$(VPN_ETA_TEST_STATS="    Connection State:            Disconnected" \
+	VPN_ETA_TEST_PERSIST=1 "$PLUGIN")
+check "a real disconnect still renders off" "VPN off" \
+	"$(printf '%s\n' "$out" | head -1 | sed 's/ |.*//')"
+check "and still announces the drop" "VPN disconnected" "$(last_notification)"
+
+# The corner the transition fix opens up: most real drops go connected ->
+# Reconnecting -> gone. If only `connected` counted as "we had a session", the
+# transition would swallow the announcement for the majority of actual drops.
+reset_session_state
+run_live "$(stats_for '3 Hours 0 Minutes Remaining')"
+VPN_ETA_TEST_STATS="    Connection State:            Reconnecting" \
+	VPN_ETA_TEST_PERSIST=1 "$PLUGIN" >/dev/null
+check "a drop seen through a reconnect is still announced" "VPN disconnected" \
+	"$(VPN_ETA_TEST_STATS="    Connection State:            Disconnected" \
+		VPN_ETA_TEST_PERSIST=1 "$PLUGIN" >/dev/null; last_notification)"
+
+# ... but a teardown we started ourselves still must not announce, even when it
+# passes through Disconnecting on the way out.
+reset_session_state
+run_live "$(stats_for '3 Hours 0 Minutes Remaining')"
+date +%s >"$STATE_DIR/expected-teardown"
+VPN_ETA_TEST_STATS="    Connection State:            Disconnecting" \
+	VPN_ETA_TEST_PERSIST=1 "$PLUGIN" >/dev/null
+VPN_ETA_TEST_STATS="    Connection State:            Disconnected" \
+	VPN_ETA_TEST_PERSIST=1 "$PLUGIN" >/dev/null
+check "our own teardown stays quiet through a transition" "0" "$(notifications)"
+reset_session_state
+
+
+reset_session_state
+run_live "$(stats_for '5 Hours 0 Minutes Remaining')"
+check "hours left is not worth interrupting for" "0" "$(notifications)"
+
+run_live "$(stats_for '58 Minutes Remaining')"
+check "the first mark warns" "1" "$(notifications)"
+run_live "$(stats_for '57 Minutes Remaining')"
+check "and does not warn again a minute later" "1" "$(notifications)"
+
+run_live "$(stats_for '14 Minutes Remaining')"
+check "the second mark warns" "2" "$(notifications)"
+run_live "$(stats_for '13 Minutes Remaining')"
+check "and also fires once" "2" "$(notifications)"
+check "the warning names the session, not the tunnel" "VPN session ending" "$(last_notification)"
+
+# A Mac asleep through both marks must not wake up to a stack of them.
+reset_session_state
+run_live "$(stats_for '12 Minutes Remaining')"
+check "waking below every mark warns once" "1" "$(notifications)"
+
+# Marks belong to the session they were recorded against.
+reset_session_state
+run_live "$(stats_for '10 Minutes Remaining' 10.1.1.1)"
+run_live "$(stats_for '10 Minutes Remaining' 10.2.2.2)"
+check "a different session is warned about separately" "2" "$(notifications)"
+
+# The log exists so the next unexplained drop has a timestamp to point at.
+reset_session_state
+run_live "$(stats_for '3 Hours 0 Minutes Remaining')"
+check "a live session is logged" "connected" "$(last_event)"
+run_live '    Connection State:            Disconnected'
+check "a drop nobody asked for is announced" "VPN disconnected" "$(last_notification)"
+check "the drop is logged" "disconnected" "$(last_event)"
+check "one line per change, not per minute" "2" "$(history_lines)"
+run_live '    Connection State:            Disconnected'
+check "an unchanged state adds no line" "2" "$(history_lines)"
+
+# The start path tears the tunnel down on purpose; that is not news.
+reset_session_state
+run_live "$(stats_for '3 Hours 0 Minutes Remaining')"
+date +%s >"$STATE_DIR/expected-teardown"
+run_live '    Connection State:            Disconnected'
+check "a teardown we started is not announced" "0" "$(notifications)"
+check "but it is still logged" "disconnected" "$(last_event)"
+
+printf '    [hosts]:\n\n    > gw.example.com\n' >"$FAKE_DIR/hosts"
+reset_session_state
+run_start y connected >/dev/null
+if [ -e "$STATE_DIR/expected-teardown" ]; then
+	pass=$((pass + 1))
+else
+	fail=$((fail + 1))
+	echo "FAIL: the start path did not mark its own teardown"
+fi
+
+# The menu is the only place the log is discoverable from.
+out=$(VPN_ETA_TEST_STATS=$CONNECTED VPN_ETA_TEST_PERSIST=1 "$PLUGIN")
+check "the menu links the session log" "true" \
+	"$(printf '%s\n' "$out" | grep -q 'Session log:.*href=file://' && echo true || echo false)"
+
+# The real state dir is under "Application Support", and a raw space would cut
+# the href short in the middle of a menu parameter.
+SPACED="$STATE_DIR/with space"
+mkdir -p "$SPACED"
+SWIFTBAR_PLUGIN_DATA_PATH="$SPACED" run_live "$(stats_for '3 Hours 0 Minutes Remaining')"
+out=$(SWIFTBAR_PLUGIN_DATA_PATH="$SPACED" VPN_ETA_TEST_STATS=$CONNECTED VPN_ETA_TEST_PERSIST=1 "$PLUGIN")
+log_line=$(printf '%s\n' "$out" | grep 'Session log:')
+check "a state path with spaces is encoded" "true" \
+	"$(printf '%s' "$log_line" | grep -q '%20' && echo true || echo false)"
+# A raw space would end the href parameter mid-path, so what SwiftBar receives
+# has to still reach the file name.
+href=${log_line#*href=}
+href=${href%% *}
+check "the href reaches the end of the path" "history.log" "${href##*/}"
+
+echo "${pass} passed, ${fail} failed"
+[ "$fail" -eq 0 ]

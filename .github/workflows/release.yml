@@ -1,0 +1,63 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # A tag that cannot pass its own tests is not a release.
+      - name: Tests
+        run: |
+          tests/vpn-eta.test.sh
+          tests/install.test.sh
+
+      # The plugin is copied out of the repository, so its own VERSION is the
+      # only thing a user can report. A tag that disagrees with it ships a lie.
+      - name: Version matches the tag
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          plugin=$(swiftbar/vpn-eta.1m.sh --version)
+          echo "tag=$TAG plugin=$plugin"
+          [ "$plugin" = "vpn-eta ${TAG#v}" ] || {
+            echo "::error::$plugin does not match tag $TAG — bump VERSION in swiftbar/vpn-eta.1m.sh"
+            exit 1
+          }
+
+      - name: Notes from CHANGELOG
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version=${TAG#v}
+          # The section for this version, up to the next `## ` heading.
+          awk -v v="$version" '
+            $0 ~ "^## \\[?" v "\\]?" { inside = 1; next }
+            inside && /^## / { exit }
+            inside { print }
+          ' CHANGELOG.md >notes.md
+          if [ ! -s notes.md ]; then
+            printf 'See CHANGELOG.md for details.\n' >notes.md
+          fi
+          cat notes.md
+
+      - name: Publish
+        env:
+          TAG: ${{ github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
+        # Re-tagging is normal before a project is out in the open, and a second
+        # run must not hard-fail with "tag_name already exists". Update what is
+        # there; create it only when there is nothing to update.
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --title "$TAG" --notes-file notes.md
+          else
+            gh release create "$TAG" --title "$TAG" --notes-file notes.md --verify-tag
+          fi

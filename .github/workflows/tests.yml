@@ -1,0 +1,40 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  # The suites drive a fake Cisco client and a temporary state directory, so
+  # they need no VPN, no SwiftBar and no secrets — but they do need macOS, for
+  # BSD `stat -f` and the same `/bin/sh` (bash 3.2) the scripts run under.
+  test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Syntax
+        run: |
+          bash -n swiftbar/vpn-eta.1m.sh
+          bash -n tests/vpn-eta.test.sh
+          bash -n tests/install.test.sh
+          sh -n install.sh
+          sh -n uninstall.sh
+          sh -n docs/make-menu-image.sh
+
+      - name: Plugin behaviour
+        run: tests/vpn-eta.test.sh
+
+      - name: Installer and uninstaller
+        run: tests/install.test.sh
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: ShellCheck
+        run: |
+          shellcheck --version
+          shellcheck install.sh uninstall.sh docs/make-menu-image.sh
+          shellcheck swiftbar/vpn-eta.1m.sh tests/vpn-eta.test.sh tests/install.test.sh
