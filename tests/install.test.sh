@@ -158,6 +158,53 @@ check "--all removes the config without being asked twice" "false" \
 check "and removes the plugin" "false" \
 	"$([ -e "$SANDBOX/allyes/plugins/vpn-eta.1m.sh" ] && echo true || echo false)"
 
+# ---------------------------------------------------------------------------
+# The unscoped run — the one a user actually types. Every test above passes
+# --plugin-dir, which takes a different branch, so nothing here exercised the
+# default state-directory list until this case existed. That gap is what let the
+# list go stale: SwiftBar names a plugin's data directory after the plugin FILE
+# only while the plugin folder is SwiftBar's own, and after the plugin's full
+# PATH once it is not — which is every installation this project documents.
+#
+# An unscoped run reads the folder out of SwiftBar's preferences and deletes the
+# plugin it finds there, so it may only be let loose once the stub that redirects
+# that read is proven to be in effect. A stub that silently missed would point
+# this at the real menu bar.
+mkdir -p "$SANDBOX/unscoped-stub"
+cat >"$SANDBOX/unscoped-stub/defaults" <<STUB
+#!/bin/sh
+printf '%s\n' "$SANDBOX/unscoped/plugins"
+STUB
+chmod +x "$SANDBOX/unscoped-stub/defaults"
+stubbed_dir=$(PATH=$SANDBOX/unscoped-stub:$PATH defaults read com.ameba.SwiftBar PluginDirectory)
+
+if [ "$stubbed_dir" = "$SANDBOX/unscoped/plugins" ]; then
+	mkdir -p "$SANDBOX/unscoped/plugins"
+	cp "$REPO/swiftbar/vpn-eta.1m.sh" "$SANDBOX/unscoped/plugins/"
+	swiftbar_data=$SANDBOX/data/Library/Application\ Support/SwiftBar/Plugins
+	by_path=$swiftbar_data/${SANDBOX#/}/unscoped/plugins/vpn-eta.1m.sh
+	by_name=$swiftbar_data/vpn-eta.1m.sh
+	fallback=$SANDBOX/data/Library/Application\ Support/vpn-eta
+	for d in "$by_path" "$by_name" "$fallback"; do
+		mkdir -p "$d"
+		echo "history" >"$d/history.log"
+	done
+
+	env -u XDG_CONFIG_HOME -u VPN_ETA_CONFIG -u VPN_ETA_STATE_DIR \
+		HOME="$SANDBOX/data" PATH="$SANDBOX/unscoped-stub:$PATH" \
+		"$REPO/uninstall.sh" --all </dev/null >/dev/null 2>&1
+	check "an unscoped uninstall clears the data directory SwiftBar really used" "false" \
+		"$([ -d "$by_path" ] && echo true || echo false)"
+	check "and the by-name one, for a plugin folder that was SwiftBar's own" "false" \
+		"$([ -d "$by_name" ] && echo true || echo false)"
+	check "and the fallback a terminal run writes to" "false" \
+		"$([ -d "$fallback" ] && echo true || echo false)"
+	check "and it removed the plugin it was pointed at" "false" \
+		"$([ -e "$SANDBOX/unscoped/plugins/vpn-eta.1m.sh" ] && echo true || echo false)"
+else
+	echo "skip: the defaults stub did not take effect; unscoped uninstall not exercised"
+fi
+
 # Without --all and with no terminal to answer, deletion must not happen.
 mkdir -p "$SANDBOX/timid/plugins"
 printf "VPN_ETA_HOST='x.example.com'\n" >"$SANDBOX/timid/config"

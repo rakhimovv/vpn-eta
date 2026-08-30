@@ -95,8 +95,19 @@ elif [ "$SCOPED" = 1 ]; then
 	say "state directories left alone (this run was scoped by --plugin-dir/--config;"
 	say "  pass --state-dir to remove one explicitly)"
 else
+	# SwiftBar names a plugin's data directory after the plugin FILE only when
+	# the plugin folder is its own; point it at a folder of your own — which is
+	# what install.sh does, and what the README documents — and the directory is
+	# named after the plugin's full path instead. Listing only the first shape is
+	# how `--all` came to report success while leaving the entire session history
+	# on disk. Which shape a given SwiftBar produced is recorded nowhere the
+	# uninstaller can read, so both are offered; neither exists in the other case.
 	state_dirs="$HOME/Library/Application Support/SwiftBar/Plugins/$PLUGIN_NAME
 $HOME/Library/Application Support/vpn-eta"
+	if [ -n "$PLUGIN_DIR" ]; then
+		state_dirs="$HOME/Library/Application Support/SwiftBar/Plugins/${PLUGIN_DIR#/}/$PLUGIN_NAME
+$state_dirs"
+	fi
 fi
 
 printf '%s\n' "$state_dirs" | while IFS= read -r dir; do

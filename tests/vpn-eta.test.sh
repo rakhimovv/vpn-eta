@@ -183,6 +183,13 @@ if [ -n "$addr" ]; then
 		>"$STATE_DIR/last-session"
 	out=$(VPN_ETA_TEST_STATS=$NOT_ATTACHED "$PLUGIN")
 	check "a live tunnel keeps the countdown alive" "VPN 2h 50m | color=green" "$(first_line "$out")"
+	# This render says a session is up and how long it has left, so the item
+	# that ends one belongs here too — otherwise the picture and the actions
+	# disagree. It is also the branch where Start cannot help: a client that
+	# will not answer `stats` will not answer `hosts` either, while disconnect
+	# needs neither.
+	check "a countdown held up by a live tunnel can still be ended" "1" \
+		"$(printf '%s\n' "$out" | grep -c 'param0=disconnect')"
 
 	printf 'epoch=%s\nminutes=180\naddress=%s\n' "$(($(date +%s) - 7200))" "$addr" \
 		>"$STATE_DIR/last-session"
@@ -205,18 +212,38 @@ fi
 
 # Both actions carried the ↻ glyph and sat next to each other, so an instant
 # reread and a tear-down-plus-SMS-reauth read as the same kind of button.
+# Every action item carries refresh=true now, so the reread is picked out by
+# being the only one that runs no command: `param0=` is what the others have.
 out=$(VPN_ETA_TEST_STATS=$CONNECTED "$PLUGIN")
 start_glyph=$(printf '%s\n' "$out" | grep 'param0=start' | awk '{print $1}')
-refresh_glyph=$(printf '%s\n' "$out" | grep 'refresh=true' | grep -v 'param0=start' | awk '{print $1}')
+refresh_glyph=$(printf '%s\n' "$out" | grep 'refresh=true' | grep -v 'param0=' | awk '{print $1}')
 check "the session action does not wear the refresh glyph" "false" \
 	"$([ "$start_glyph" = "$refresh_glyph" ] && echo true || echo false)"
 check "the reread says what it does not touch" \
 	"Re-reads the client; the VPN session is left alone" \
 	"$(printf '%s\n' "$out" | grep 'Re-reads' | sed 's/ | .*//')"
 start_at=$(printf '%s\n' "$out" | grep -n 'param0=start' | cut -d: -f1)
-refresh_at=$(printf '%s\n' "$out" | grep -n 'refresh=true' | grep -v 'param0=start' | cut -d: -f1)
+refresh_at=$(printf '%s\n' "$out" | grep -n 'refresh=true' | grep -v 'param0=' | cut -d: -f1)
 check "the cheap action comes first" "true" \
 	"$([ "$refresh_at" -lt "$start_at" ] && echo true || echo false)"
+
+# Ending a session and starting one are one rule apart: the first is offered
+# only when there is a session to end, and both sit below the rule that fences
+# them off from the items that leave the VPN alone.
+check "a live session can be ended from the menu" "1" \
+	"$(printf '%s\n' "$out" | grep -c 'param0=disconnect')"
+disconnect_at=$(printf '%s\n' "$out" | grep -n 'param0=disconnect' | cut -d: -f1)
+rule_at=$(printf '%s\n' "$out" | grep -n '^---$' | tail -1 | cut -d: -f1)
+check "and it is fenced off with the other costly one" "true" \
+	"$([ "$disconnect_at" -gt "$rule_at" ] && echo true || echo false)"
+out=$(VPN_ETA_TEST_STATS=$DISCONNECTED "$PLUGIN")
+check "nothing to end means nothing to offer" "0" \
+	"$(printf '%s\n' "$out" | grep -c 'param0=disconnect')"
+# A tunnel renegotiating is still a session, and being unable to end one that
+# will not settle is exactly when the button is wanted.
+out=$(VPN_ETA_TEST_STATS='    Connection State:            Reconnecting' "$PLUGIN")
+check "a reconnecting session can still be ended" "1" \
+	"$(printf '%s\n' "$out" | grep -c 'param0=disconnect')"
 
 # ---------------------------------------------------------------------------
 # The start path: it disconnects and reconnects a live VPN, so it is exercised
@@ -238,7 +265,10 @@ connect)
 	printf '%s\n' "${FAKE_VPN_AFTER_CONNECT:-connected}" >"$FAKE_VPN_DIR/state"
 	exit "${FAKE_VPN_CONNECT_RC:-0}"
 	;;
-disconnect) printf 'disconnected\n' >"$FAKE_VPN_DIR/state" ;;
+disconnect)
+	printf 'disconnected\n' >"$FAKE_VPN_DIR/state"
+	exit "${FAKE_VPN_DISCONNECT_RC:-0}"
+	;;
 esac
 FAKE
 chmod +x "$FAKE_DIR/vpn"
@@ -459,7 +489,8 @@ check "the dropdown keeps the full countdown under compact" "🔐  23h 53m remai
 
 reset_session_state() {
 	rm -f "$STATE_DIR/last-session" "$STATE_DIR/last-event" \
-		"$STATE_DIR/history.log" "$STATE_DIR/expected-teardown" "$NOTIFY_SINK"
+		"$STATE_DIR/history.log" "$STATE_DIR/expected-teardown" \
+		"$STATE_DIR/muted-until" "$NOTIFY_SINK"
 }
 
 notifications() {
@@ -587,6 +618,121 @@ else
 	fail=$((fail + 1))
 	echo "FAIL: the start path did not mark its own teardown"
 fi
+
+# ---------------------------------------------------------------------------
+# Ending a session from the menu. It runs with no terminal attached, so nothing
+# it prints is ever read: what it did to the client, to the state and to the
+# notification centre is the whole of its behaviour.
+
+# $1 is the state the fake starts in; the rest are extra environment.
+run_disconnect() {
+	printf '%s\n' "$1" >"$FAKE_DIR/state"
+	: >"$FAKE_DIR/log"
+	shift
+	env "$@" VPN_ETA_VPN_BIN="$FAKE_DIR/vpn" "$PLUGIN" disconnect
+}
+
+reset_session_state
+run_live "$(stats_for '3 Hours 0 Minutes Remaining')"
+run_disconnect connected >/dev/null
+disconnect_rc=$?
+check "the menu item ends the session" "1" "$(grep -c '^disconnect' "$FAKE_DIR/log" | tr -d ' ')"
+check "and reports success" "0" "$disconnect_rc"
+check "and does not start a new one" "0" "$(grep -c '^connect' "$FAKE_DIR/log" | tr -d ' ')"
+# The deadline belonged to a session that no longer exists; left behind, the
+# next unreadable reply would extrapolate from it.
+check "and drops the countdown with the session" "false" \
+	"$([ -e "$STATE_DIR/last-session" ] && echo true || echo false)"
+
+# The point of the button over Cisco's own window: a teardown you asked for is
+# not a drop, and must not raise the alarm the plugin exists to raise.
+VPN_ETA_TEST_STATS='    Connection State:            Disconnected' \
+	VPN_ETA_TEST_PERSIST=1 "$PLUGIN" >/dev/null
+check "a teardown from the menu is not announced as a drop" "0" "$(notifications)"
+check "but it is still logged" "disconnected" "$(last_event)"
+
+# Nothing prints anywhere on this path, so a failure that only printed would be
+# a silent one — and the session it failed to end still has its deadline.
+reset_session_state
+seed_cache 60 500 10.9.9.9
+run_disconnect connected FAKE_VPN_DISCONNECT_RC=1 >/dev/null
+disconnect_rc=$?
+check "a refused disconnect is an error" "1" "$disconnect_rc"
+check "and says so where it can be seen" "VPN disconnect failed" "$(last_notification)"
+check "and keeps the countdown of the session still running" "true" \
+	"$([ -e "$STATE_DIR/last-session" ] && echo true || echo false)"
+
+# Same reason as the start path: SwiftBar's own refresh fires on the click,
+# minutes before the tunnel is actually down.
+reset_session_state
+: >"$REFRESH_SINK"
+run_disconnect connected SWIFTBAR=1 SWIFTBAR_PLUGIN_PATH=/somewhere/vpn-eta.1m.sh \
+	VPN_ETA_REFRESH_SINK="$REFRESH_SINK" >/dev/null
+check "a finished disconnect asks SwiftBar to read again" \
+	"swiftbar://refreshplugin?name=vpn-eta" "$(tail -1 "$REFRESH_SINK")"
+
+# ---------------------------------------------------------------------------
+# Muting the alerts. A mute is a deadline rather than a switch, so when it lifts
+# matters as much as what it silences.
+
+reset_session_state
+run_live "$(stats_for '5 Hours 0 Minutes Remaining')"
+"$PLUGIN" mute
+run_live "$(stats_for '58 Minutes Remaining')"
+check "a mark crossed under a mute does not interrupt" "0" "$(notifications)"
+"$PLUGIN" unmute
+run_live "$(stats_for '57 Minutes Remaining')"
+# The mark was recorded while muted precisely so that lifting the mute does not
+# hand over the hour of warnings it was asked to suppress.
+check "lifting the mute releases no backlog" "0" "$(notifications)"
+run_live "$(stats_for '14 Minutes Remaining')"
+check "and the next mark is heard again" "1" "$(notifications)"
+
+reset_session_state
+run_live "$(stats_for '3 Hours 0 Minutes Remaining')"
+"$PLUGIN" mute
+run_live '    Connection State:            Disconnected'
+check "a drop under a mute is silent too" "0" "$(notifications)"
+check "and still logged, because the log is not an interruption" "disconnected" "$(last_event)"
+
+# The property that makes a mute safe to click: it runs out on its own.
+reset_session_state
+run_live "$(stats_for '3 Hours 0 Minutes Remaining')"
+printf '%s\n' "$(($(date +%s) - 1))" >"$STATE_DIR/muted-until"
+run_live '    Connection State:            Disconnected'
+check "an expired mute is no mute at all" "VPN disconnected" "$(last_notification)"
+
+rm -f "$STATE_DIR/muted-until"
+VPN_ETA_MUTE_MINUTES=90 "$PLUGIN" mute
+mute_until=$(cat "$STATE_DIR/muted-until")
+mute_span_seconds=$((mute_until - $(date +%s)))
+check "the mute lasts as long as the item promised" "true" \
+	"$([ "$mute_span_seconds" -gt 5390 ] && [ "$mute_span_seconds" -le 5400 ] && echo true || echo false)"
+
+# A silence with no switch in sight is indistinguishable from notifications that
+# have quietly stopped working, so the menu has to carry both states.
+rm -f "$STATE_DIR/muted-until"
+out=$(VPN_ETA_TEST_STATS=$CONNECTED "$PLUGIN")
+check "the menu offers the mute by its span" "🔕  Mute alerts for 1h" \
+	"$(printf '%s\n' "$out" | grep 'param0=mute' | sed 's/ | .*//')"
+check "and a custom span is what the item promises" "🔕  Mute alerts for 1h 30m" \
+	"$(env VPN_ETA_MUTE_MINUTES=90 VPN_ETA_TEST_STATS="$CONNECTED" "$PLUGIN" |
+		grep 'param0=mute' | sed 's/ | .*//')"
+printf '%s\n' "$(($(date +%s) + 1800))" >"$STATE_DIR/muted-until"
+out=$(VPN_ETA_TEST_STATS=$CONNECTED "$PLUGIN")
+check "a mute in force offers the way out of it" "🔔  Resume alerts" \
+	"$(printf '%s\n' "$out" | grep 'param0=unmute' | sed 's/ | .*//')"
+check "and says how much of it is left" "Muted for another 30m" \
+	"$(printf '%s\n' "$out" | grep 'Muted for another' | sed 's/ | .*//')"
+check "and does not also offer to mute again" "0" \
+	"$(printf '%s\n' "$out" | grep -c 'param0=mute')"
+# Zero is the way to take the item off the menu; "" on NOTIFY_MARKS is the way
+# to switch the warnings off for good, and the two must not be confused.
+rm -f "$STATE_DIR/muted-until"
+check "zero minutes removes the item entirely" "0" \
+	"$(env VPN_ETA_MUTE_MINUTES=0 VPN_ETA_TEST_STATS="$CONNECTED" "$PLUGIN" |
+		grep -c 'param0=mute')"
+reset_session_state
 
 # The menu is the only place the log is discoverable from.
 out=$(VPN_ETA_TEST_STATS=$CONNECTED VPN_ETA_TEST_PERSIST=1 "$PLUGIN")

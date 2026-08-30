@@ -3,12 +3,12 @@
 # <xbar.title>VPN session ETA</xbar.title>
 # <xbar.desc>Shows the server-reported time remaining in the VPN session.</xbar.desc>
 # <xbar.author>Ruslan Rakhimov</xbar.author>
-# <xbar.version>v1.0.0</xbar.version>
+# <xbar.version>v1.1.0</xbar.version>
 
 # The plugin is COPIED into SwiftBar's folder, so the installed file has no link
 # back to the tag it came from. Without this a bug report can name the macOS,
 # SwiftBar and Cisco versions and still not say which vpn-eta is running.
-VERSION=1.0.0
+VERSION=1.1.0
 
 export PATH="/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin"
 
@@ -62,6 +62,7 @@ STATE_FILE=$STATE_DIR/last-session
 EVENT_FILE=$STATE_DIR/last-event
 HISTORY_FILE=$STATE_DIR/history.log
 TEARDOWN_FILE=$STATE_DIR/expected-teardown
+MUTE_FILE=$STATE_DIR/muted-until
 
 # What the menu bar says in front of the countdown. Two menu-bar items showing
 # "VPN" tell you nothing, so a second gateway can be labelled "Work" or "Lab".
@@ -85,6 +86,11 @@ NOTIFY_MARKS=${VPN_ETA_NOTIFY_MARKS-60 15}
 HISTORY_MAX_LINES=$(number_or "${VPN_ETA_HISTORY_LINES:-500}" 500)
 # A teardown this plugin started itself is not a drop worth announcing.
 TEARDOWN_GRACE_SECONDS=$(number_or "${VPN_ETA_TEARDOWN_GRACE:-300}" 300)
+# How long one click of the mute item silences the alerts. It is a duration and
+# not a toggle on purpose: a mute that never lifts itself is how you miss the
+# fifteen-minute warning a week later. 0 removes the item — NOTIFY_MARKS="" is
+# the way to turn the warnings off for good.
+MUTE_MINUTES=$(number_or "${VPN_ETA_MUTE_MINUTES:-60}" 60)
 
 # Colour thresholds for the countdown, in minutes: at or below the first it goes
 # red, at or below the second orange, otherwise green. They are independent of
@@ -366,6 +372,35 @@ expected_teardown() {
 	[ $(($(now_epoch) - stamp)) -le "$TEARDOWN_GRACE_SECONDS" ]
 }
 
+# Minutes of silence still to run, or 1 when the alerts are live. Rounds up, so
+# a mute with forty seconds left reads as 1m rather than as none.
+mute_remaining() {
+	[ -r "$MUTE_FILE" ] || return 1
+	until_epoch=$(cat "$MUTE_FILE" 2>/dev/null)
+	case $until_epoch in '' | *[!0-9]*) return 1 ;; esac
+	seconds_left=$((until_epoch - $(now_epoch)))
+	[ "$seconds_left" -gt 0 ] || return 1
+	printf '%s\n' $(((seconds_left + 59) / 60))
+}
+
+# A deadline rather than a flag: the file alone says when the silence ends, so
+# nothing has to remember to lift it — not a later run, and not the user.
+set_mute() {
+	mkdir -p "$STATE_DIR" 2>/dev/null || return 1
+	printf '%s\n' $(($(now_epoch) + MUTE_MINUTES * 60)) >"$MUTE_FILE" 2>/dev/null
+}
+
+clear_mute() { rm -f "$MUTE_FILE" 2>/dev/null; }
+
+# "1h" rather than "1h 0m": this labels a button, not a countdown.
+mute_span() {
+	if [ "$1" -ge 60 ] && [ $(($1 % 60)) -eq 0 ]; then
+		printf '%dh\n' $(($1 / 60))
+	else
+		format_minutes "$1"
+	fi
+}
+
 # Marks already announced for the session now running. A different client
 # address, or a countdown that jumped forward, is a different session, and its
 # predecessor's marks say nothing about it.
@@ -391,8 +426,14 @@ announce_marks() {
 		marks=${marks:+$marks,}$mark
 		fresh=$mark
 	done
-	[ -n "$fresh" ] && notify "VPN session ending" \
-		"About $(format_minutes "$minutes") left. Start a new session from the menu bar."
+	# A muted mark is still written down as announced, so lifting the mute
+	# releases no backlog: silence was the request, not a deferral. Note the
+	# redirect — this function's stdout is the new mark list, and a stray line
+	# from mute_remaining would be read back as one.
+	if [ -n "$fresh" ] && ! mute_remaining >/dev/null; then
+		notify "VPN session ending" \
+			"About $(format_minutes "$minutes") left. Start a new session from the menu bar."
+	fi
 	printf '%s\n' "$marks"
 }
 
@@ -408,6 +449,10 @@ announce_drop() {
 	*) return 0 ;;
 	esac
 	expected_teardown && return 0
+	# Mute covers the drop too. Whoever asked for quiet did so to stop being
+	# interrupted, and a drop is the loudest interruption of the set; the menu
+	# bar still turns gray, so the fact is not hidden, only the alert.
+	mute_remaining >/dev/null && return 0
 	case ${1:-} in
 	'' | *[!0-9]*) notify "VPN disconnected" "The tunnel is down." ;;
 	*) notify "VPN disconnected" "The session ended with $(format_minutes "$1") of its time unused." ;;
@@ -458,9 +503,30 @@ start_button() {
 	fi
 }
 
+# The counterpart to starting a session: ending one on purpose. It needs no
+# terminal window, because ending a session asks Cisco for nothing — the
+# password and the one-time code are what *starting* one costs.
+disconnect_button() {
+	echo "⛔  Disconnect | bash=$0 param0=disconnect terminal=false refresh=true"
+	echo "Ends this session now; no drop alert follows | color=gray size=11"
+}
+
 refresh_button() {
 	echo "↻  Refresh countdown | refresh=true"
 	echo "Re-reads the client; the VPN session is left alone | color=gray size=11"
+}
+
+# Muting is visible only while it lasts, and the item that offers it is the same
+# item that lifts it — a silence with no switch in sight is indistinguishable
+# from notifications that have simply stopped working.
+mute_button() {
+	if muted_for=$(mute_remaining); then
+		echo "🔔  Resume alerts | bash=$0 param0=unmute terminal=false refresh=true"
+		echo "Muted for another $(mute_span "$muted_for") | color=gray size=11"
+	elif [ "$MUTE_MINUTES" -gt 0 ]; then
+		echo "🔕  Mute alerts for $(mute_span "$MUTE_MINUTES") | bash=$0 param0=mute terminal=false refresh=true"
+		echo "Silences the warnings and the drop alert; the countdown runs on | color=gray size=11"
+	fi
 }
 
 # A history nobody can find is not worth keeping, so the menu says when the
@@ -472,16 +538,21 @@ history_line() {
 	echo "🕘  Session log: ${last} | href=file://$(urlencode "$HISTORY_FILE" "/") size=11"
 }
 
-# One block, so every render offers the same two actions in the same order: the
-# free one next to the reading it refreshes, the costly one fenced off below.
+# One block, so every render offers the same actions in the same order: above
+# the rule the ones that leave the session alone, below it the two that end it.
+# Disconnect is offered only against a session there is something to end.
 menu_actions() {
 	if [ -n "$CONFIG_ERROR" ]; then
 		echo "⚠️  Settings ignored: ${CONFIG_ERROR} has a syntax error | color=red size=12"
 	fi
 	history_line
 	refresh_button
+	mute_button
 	echo "---"
 	start_button "$1"
+	if [ "${1-}" = active ]; then
+		disconnect_button
+	fi
 }
 
 start_new_session() {
@@ -608,12 +679,45 @@ start_new_session() {
 	echo "New VPN session established: ${new_remaining}."
 }
 
+# Ending the session on purpose. Unlike the start path this one runs with no
+# terminal attached, so nothing it prints is seen: a failure has to arrive as a
+# notification or not at all.
+disconnect_session() {
+	if ! find_vpn; then
+		notify "VPN disconnect failed" "Cisco Secure Client not found."
+		echo "Cisco Secure Client not found."
+		return 1
+	fi
+	# Marked BEFORE the call, not after: the plugin's own scheduled run lands
+	# every minute and would otherwise catch the tunnel mid-teardown and raise
+	# the very alarm this button is meant to avoid. A mark left behind by a
+	# disconnect that then failed only costs a few quiet minutes.
+	mark_expected_teardown
+	if ! run_vpn disconnect >/dev/null 2>&1; then
+		notify "VPN disconnect failed" \
+			"Cisco could not end the session. Check Cisco Secure Client."
+		echo "Cisco could not disconnect the current session."
+		return 1
+	fi
+	# Only now: a failed disconnect leaves the session running, and with it the
+	# deadline that the next unreadable reply will want to extrapolate from.
+	clear_state
+	echo "VPN session ended."
+}
+
 # Renders the "the client would not answer" case, which is where the old plugin
 # wrongly claimed the VPN was off. Falls back to the last known countdown for as
 # long as the tunnel the client reported is still bound.
 render_unreadable() {
 	detail=$1
+	# Which actions the foot of the menu may offer. Only the first branch below
+	# has evidence of a session: the address the client last reported is still
+	# bound to a utun, which is what "there is something to end" means when the
+	# client itself will not say. The other two have a tunnel that may be
+	# anyone's, or none at all.
+	session=disconnected
 	if load_state && tunnel_has_address "$cached_address" && cache_is_fresh; then
+		session=active
 		short=$(format_minutes "$cached_minutes")
 		record_event unreadable "$cached_address" "estimated=${cached_minutes}m tunnel=up"
 		echo "${BAR_PREFIX}$(format_menubar "$cached_minutes") | color=$(color_for_minutes "$cached_minutes")"
@@ -640,7 +744,7 @@ render_unreadable() {
 		echo "${detail} | color=gray size=12"
 	fi
 	echo "---"
-	menu_actions disconnected
+	menu_actions "$session"
 }
 
 # SwiftBar's `refresh=true` fires when the item is CLICKED, which is a minute or
@@ -677,6 +781,28 @@ if [ "${1-}" = start ]; then
 	# menu bar showing something that is no longer true.
 	refresh_menu_bar
 	exit "$start_rc"
+fi
+
+# The menu items below carry refresh=true as well, but SwiftBar fires that when
+# the item is CLICKED — before any of this has happened. The nudge that matters
+# is this one, at the end.
+if [ "${1-}" = disconnect ]; then
+	disconnect_session
+	disconnect_rc=$?
+	refresh_menu_bar
+	exit "$disconnect_rc"
+fi
+
+if [ "${1-}" = mute ]; then
+	set_mute
+	refresh_menu_bar
+	exit 0
+fi
+
+if [ "${1-}" = unmute ]; then
+	clear_mute
+	refresh_menu_bar
+	exit 0
 fi
 
 if [ "${VPN_ETA_TEST_STATS+x}" = x ]; then

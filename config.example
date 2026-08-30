@@ -56,6 +56,12 @@
 # once per session. Set to "" to switch notifications off entirely.
 #VPN_ETA_NOTIFY_MARKS="60 15"
 
+# How long one click of "🔕 Mute alerts" silences the warnings and the drop
+# alert. It is a duration and not a switch on purpose — a mute that never lifts
+# itself is how you miss the fifteen-minute warning a week later. 0 takes the
+# item off the menu; to switch the warnings off for good, empty the marks above.
+#VPN_ETA_MUTE_MINUTES=60
+
 # ── Session log ──────────────────────────────────────────────────────────────
 
 # How many lines of history.log to keep.

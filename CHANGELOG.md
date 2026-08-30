@@ -3,6 +3,29 @@
 Notable changes. Dates are release dates; the format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.1.0] — 2026-08-30
+
+### Added
+
+- `⛔ Disconnect`, offered whenever there is a session to end. It needs no terminal window —
+  ending a session asks Cisco for nothing — and the teardown is marked as one you asked for,
+  so it raises no drop alert. Until now the menu could start a session but not end one.
+- `🔕 Mute alerts for 1h`, and the `🔔 Resume alerts` that lifts it early. Silences the
+  countdown warnings and the drop alert while the countdown itself keeps running. A mute is a
+  deadline rather than a switch, so it always expires; `VPN_ETA_MUTE_MINUTES` sets the span,
+  and `0` takes the item off the menu.
+
+### Fixed
+
+- `uninstall.sh` left the session history behind on every installation the README describes.
+  SwiftBar names a plugin's data directory after the plugin file only while the plugin folder
+  is SwiftBar's own, and after the plugin's full path once it is not — and only the first
+  shape was on the list, so `--all` reported success over an untouched directory. Both shapes
+  are removed now. The unscoped run had no test at all, which is what let the list go stale;
+  it has one.
+- The render that keeps a countdown alive off a still-bound tunnel offered no way to end that
+  session, and told `🔑 Start new session…` to describe itself as if the VPN were down.
+
 ## [1.0.0] — 2026-08-25
 
 First release. Previously a second SwiftBar plugin inside the `lidguard` repository, now its

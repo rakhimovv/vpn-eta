@@ -34,6 +34,14 @@ VPN_ETA_CONFIG=/dev/null VPN_ETA_TEST_STATS='    Connection State:            Co
 `VPN_ETA_CONFIG=/dev/null` is not optional there: without it your own config decides what you
 are measuring.
 
+**What no green suite covers: the menu-parameter line itself.** Both suites drive the action
+paths the way SwiftBar would — `swiftbar/vpn-eta.1m.sh disconnect`, `… mute` — but nothing here
+exercises SwiftBar reading `bash=… param0=… terminal=false` and launching the script, so a typo
+in that half of an action item is invisible to `tests/` and to ShellCheck alike. Two things
+constrain it instead: the sibling plugin `lidguard.10s.sh` in the same plugin folder has used
+that exact form since August, and a hand-click is the only real proof. Click a changed item once
+before trusting it in an incident.
+
 ## Layout
 
 `swiftbar/vpn-eta.1m.sh` is the whole product — one bash file SwiftBar copies into its plugin
@@ -68,10 +76,24 @@ including the common one that leaves through `Reconnecting`.
 
 ## State, and the catch that protects it
 
-Four files under `STATE_DIR`: `last-session` (cached countdown, client address, marks already
+Five files under `STATE_DIR`: `last-session` (cached countdown, client address, marks already
 notified), `last-event` (the dedupe key that makes a per-minute plugin log one line per
-*change*), `history.log`, and `expected-teardown` (a disconnect the plugin itself started must
-not raise an alarm).
+*change*), `history.log`, `expected-teardown` (a disconnect the plugin itself started must
+not raise an alarm), and `muted-until` (an epoch, so the silence lifts itself rather than
+waiting to be remembered).
+
+Both of those last two are deadlines that suppress a notification, and neither suppresses a
+*log line* — the history is what an unexplained drop is reconstructed from later, and it is
+not an interruption anybody asked to be spared.
+
+`STATE_DIR` under SwiftBar has **two** shapes, and which one you get is not a preference anyone
+sets: SwiftBar names a plugin's data directory after the plugin FILE while the plugin folder is
+its own, and after the plugin's full PATH once it is not — `…/SwiftBar/Plugins/Users/you/…/
+vpn-eta.1m.sh` for an installation of the kind the README describes. Every SwiftBar-launched run
+agrees (scheduled ticks, `refreshplugin` URLs and `bash=` action clicks alike, measured), so a
+mute written by a click is read by the next render; a run from a terminal has neither variable
+and falls back to `~/Library/Application Support/vpn-eta`, which is why hand-testing sees a
+different history from the menu bar. `uninstall.sh` has to list both shapes — it once listed one.
 
 `may_write_state()` is the safety catch: a run with `VPN_ETA_TEST_STATS` set writes no state
 and sends no notification, so hand-testing cannot disturb a live session's bookkeeping or
