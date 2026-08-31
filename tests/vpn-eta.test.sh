@@ -251,31 +251,53 @@ check "and the sentence itself survives the trim" "true" \
 rm -f "$STATE_DIR/last-session" "$STATE_DIR/last-event"
 
 # A stale countdown is extrapolated only while the cached address is still bound
-# to a utun, so seed the cache with the address this host actually has.
-addr=$(ifconfig 2>/dev/null | awk '
-	/^[a-z0-9]+:/ { iface = $1 }
-	$1 == "inet" && iface ~ /^utun/ { print $2; exit }
-')
-if [ -n "$addr" ]; then
-	printf 'epoch=%s\nminutes=180\naddress=%s\n' "$(($(date +%s) - 600))" "$addr" \
-		>"$STATE_DIR/last-session"
-	out=$(VPN_ETA_TEST_STATS=$NOT_ATTACHED "$PLUGIN")
-	check "a live tunnel keeps the countdown alive" "VPN 2h 50m | color=green" "$(first_line "$out")"
-	# This render says a session is up and how long it has left, so the item
-	# that ends one belongs here too — otherwise the picture and the actions
-	# disagree. It is also the branch where Start cannot help: a client that
-	# will not answer `stats` will not answer `hosts` either, while disconnect
-	# needs neither.
-	check "a countdown held up by a live tunnel can still be ended" "1" \
-		"$(printf '%s\n' "$out" | grep -c 'param0=disconnect')"
+# to a utun. This used to read the host's OWN ifconfig and skip the whole block
+# when it found no tunnel — so the branch the plugin exists for went untested on
+# exactly the machine most likely to run the suite, a CI runner, and the "no
+# tunnel at all" direction could not be tested on a developer's machine that had
+# one. VPN_ETA_TEST_IFCONFIG substitutes the reading, so both directions run
+# everywhere and the awk that parses it is still the code under test.
+TUNNEL_UP='lo0: flags=8049<UP,LOOPBACK,RUNNING,MULTICAST> mtu 16384
+	inet 127.0.0.1 netmask 0xff000000
+en0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
+	inet 192.168.1.20 netmask 0xffffff00 broadcast 192.168.1.255
+utun4: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 1300
+	inet 10.0.0.2 --> 10.0.0.2 netmask 0xffffffff'
+NO_TUNNEL='lo0: flags=8049<UP,LOOPBACK,RUNNING,MULTICAST> mtu 16384
+	inet 127.0.0.1 netmask 0xff000000
+en0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
+	inet 192.168.1.20 netmask 0xffffff00 broadcast 192.168.1.255'
 
-	printf 'epoch=%s\nminutes=180\naddress=%s\n' "$(($(date +%s) - 7200))" "$addr" \
+seed_cache() {
+	printf 'epoch=%s\nminutes=180\naddress=%s\n' "$(($(date +%s) - $1))" "${2:-10.0.0.2}" \
 		>"$STATE_DIR/last-session"
-	out=$(VPN_ETA_TEST_STATS=$NOT_ATTACHED "$PLUGIN")
-	check "a cache past the staleness limit is dropped" "VPN ? | color=orange" "$(first_line "$out")"
-else
-	echo "skip: no utun interface, cannot test the stale-countdown fallback"
-fi
+}
+
+seed_cache 600
+out=$(VPN_ETA_TEST_IFCONFIG=$TUNNEL_UP VPN_ETA_TEST_STATS=$NOT_ATTACHED "$PLUGIN")
+check "a live tunnel keeps the countdown alive" "VPN 2h 50m | color=green" "$(first_line "$out")"
+# This render says a session is up and how long it has left, so the item that
+# ends one belongs here too — otherwise the picture and the actions disagree. It
+# is also the branch where Start cannot help: a client that will not answer
+# `stats` will not answer `hosts` either, while disconnect needs neither.
+check "a countdown held up by a live tunnel can still be ended" "1" \
+	"$(printf '%s\n' "$out" | grep -c 'param0=disconnect')"
+
+# The cached address is a session identity, not a liveness flag: a tunnel holding
+# a DIFFERENT address is a different session, whose deadline says nothing here.
+seed_cache 600 10.9.9.9
+check "a tunnel holding another address does not revive the countdown" "VPN ? | color=orange" \
+	"$(first_line "$(VPN_ETA_TEST_IFCONFIG=$TUNNEL_UP VPN_ETA_TEST_STATS=$NOT_ATTACHED "$PLUGIN")")"
+
+seed_cache 7200
+check "a cache past the staleness limit is dropped" "VPN ? | color=orange" \
+	"$(first_line "$(VPN_ETA_TEST_IFCONFIG=$TUNNEL_UP VPN_ETA_TEST_STATS=$NOT_ATTACHED "$PLUGIN")")"
+
+# The other direction, which no machine with a VPN up could reach before: no
+# tunnel and no readable reply is the only evidence strong enough for `off`.
+seed_cache 600
+check "no tunnel and no readable reply may say off" "VPN off | color=gray" \
+	"$(first_line "$(VPN_ETA_TEST_IFCONFIG=$NO_TUNNEL VPN_ETA_TEST_STATS=$NOT_ATTACHED "$PLUGIN")")"
 
 # A real disconnect must clear the cache so it cannot resurface later.
 printf 'epoch=%s\nminutes=180\naddress=%s\n' "$(date +%s)" "10.0.0.1" \

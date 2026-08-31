@@ -3,12 +3,12 @@
 # <xbar.title>VPN session ETA</xbar.title>
 # <xbar.desc>Shows the server-reported time remaining in the VPN session.</xbar.desc>
 # <xbar.author>Ruslan Rakhimov</xbar.author>
-# <xbar.version>v1.1.1</xbar.version>
+# <xbar.version>v1.1.2</xbar.version>
 
 # The plugin is COPIED into SwiftBar's folder, so the installed file has no link
 # back to the tag it came from. Without this a bug report can name the macOS,
 # SwiftBar and Cisco versions and still not say which vpn-eta is running.
-VERSION=1.1.1
+VERSION=1.1.2
 
 export PATH="/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin"
 
@@ -278,11 +278,26 @@ read_stats() {
 	return 1
 }
 
+# Both tunnel probes below read one thing, and it is the machine they run on.
+# That makes every render beneath them depend on whichever VPN the machine
+# happens to have up — which is why the suite could only SKIP the extrapolation
+# case on a host with no `utun`, and why a picture of a silent client could not
+# be generated at all. Substituting the reading rather than the verdict keeps the
+# awk that parses it under test; a boolean seam would have skipped exactly the
+# part that is easy to get wrong.
+read_ifconfig() {
+	if [ -n "${VPN_ETA_TEST_IFCONFIG+x}" ]; then
+		printf '%s\n' "$VPN_ETA_TEST_IFCONFIG"
+	else
+		ifconfig 2>/dev/null
+	fi
+}
+
 # Independent of the CLI: is the address the tunnel last held still bound to a
 # utun interface? Only a "no" here is strong enough to claim the VPN is down.
 tunnel_has_address() {
 	[ -n "$1" ] || return 1
-	ifconfig 2>/dev/null | awk -v want="$1" '
+	read_ifconfig | awk -v want="$1" '
 		/^[a-z0-9]+:/ { iface = $1 }
 		$1 == "inet" && $2 == want && iface ~ /^utun/ { found = 1 }
 		END { exit !found }
@@ -290,7 +305,7 @@ tunnel_has_address() {
 }
 
 any_tunnel_up() {
-	ifconfig 2>/dev/null | awk '
+	read_ifconfig | awk '
 		/^[a-z0-9]+:/ { iface = $1 }
 		$1 == "inet" && iface ~ /^utun/ { found = 1 }
 		END { exit !found }

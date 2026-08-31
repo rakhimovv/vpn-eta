@@ -3,6 +3,27 @@
 Notable changes. Dates are release dates; the format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.1.2] — 2026-08-31
+
+### Added
+
+- A second README picture, of the menu when the client will not answer — the state the
+  troubleshooting entry is about, which until now was described but never shown. Both pictures
+  come out of `docs/make-menu-image.sh`, which runs the plugin and draws its real output.
+- `VPN_ETA_TEST_IFCONFIG`, substituting the `ifconfig` reading that both tunnel probes parse.
+
+### Fixed
+
+- The suite could only **skip** the extrapolation case — the branch this plugin exists for — when
+  the machine running it had no `utun`, which is every CI runner; and the opposite direction, no
+  tunnel at all, could not be tested on a developer's machine that had one. Both now run
+  everywhere, against a fixed `ifconfig` fixture, and a third arm covers a tunnel holding a
+  *different* address. The parsing stays the code under test: the seam substitutes the reading,
+  not the verdict.
+- `docs/make-menu-image.sh` claimed a fixed timestamp made re-runs byte-identical. It does fix the
+  content, but Chrome's PNG encoder varies a few bytes across versions on identical input, so a
+  `git status` hit there is not evidence the picture changed. The comment now says which to check.
+
 ## [1.1.1] — 2026-08-31
 
 ### Fixed

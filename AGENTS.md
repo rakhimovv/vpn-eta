@@ -107,6 +107,7 @@ make a test pass.
 |---|---|
 | `VPN_ETA_TEST_STATS` | the client's `stats` output, verbatim |
 | `VPN_ETA_TEST_RC` | that call's exit status |
+| `VPN_ETA_TEST_IFCONFIG` | the `ifconfig` reading both tunnel probes parse |
 | `VPN_ETA_TEST_PERSIST` | opts a fixture run back into writing state |
 | `VPN_ETA_VPN_BIN` | a fake Cisco binary — the only way to test the start path |
 | `VPN_ETA_NOTIFY_SINK` | collects notifications in a file instead of delivering them |

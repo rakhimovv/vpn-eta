@@ -1,17 +1,22 @@
 #!/bin/sh
-# Regenerate docs/menu.png — the picture of the menu in the README.
+# Regenerate the pictures of the menu in the README.
 #
-# It is not a photograph of somebody's screen. It runs the plugin against a
+# They are not photographs of somebody's screen. This runs the plugin against a
 # fixture, takes the output the plugin really produces, and lays those exact
-# lines out as macOS would draw them. That means the picture cannot drift away
+# lines out as macOS would draw them. That means a picture cannot drift away
 # from the menu: change a line in the plugin, run this, and the README follows.
-# It also means the image can never leak a real gateway, address or username.
+# It also means the images can never leak a real gateway, address or username.
+#
+# Two states, because they are the two the README talks about: a healthy session
+# counting down, and a client that will not answer — which is the whole subject
+# of the troubleshooting entry, and which used to have no picture at all.
 #
 #   docs/make-menu-image.sh
 set -eu
 cd "$(dirname "$0")/.."
 
 OUT=docs/menu.png
+OUT_SILENT=docs/menu-silent.png
 HTML=$(mktemp -t vpn-eta-menu).html
 STATE=$(mktemp -d -t vpn-eta-shot)
 trap 'rm -rf "$STATE" "$HTML"' EXIT
@@ -23,24 +28,21 @@ if [ ! -x "$CHROME" ]; then
 	exit 1
 fi
 
-# A session log entry so the picture shows that feature; the timestamp is fixed
-# so re-running produces a byte-identical image rather than a spurious diff.
+# A session log entry so the picture shows that feature. The timestamp is fixed
+# so the CONTENT cannot drift between runs — but do not read that as a promise of
+# a byte-identical file: Chrome's PNG encoder varies by a few bytes across
+# versions on identical input (measured 2026-08-31, 270035 → 269997 B with the
+# menu text unchanged). So a `git status` hit here is not evidence the picture
+# changed. Compare the rendered pixels, or the plugin's own output, before
+# committing a regenerated image.
 printf '2026-05-12T09:14:22+0000\tconnected\tremaining=1433m\n' >"$STATE/history.log"
 
-MENU=$(
-	VPN_ETA_CONFIG=/dev/null \
-		VPN_ETA_STATE_DIR="$STATE" \
-		VPN_ETA_LABEL="🦍" \
-		VPN_ETA_COMPACT=1 \
-		VPN_ETA_TEST_STATS='    Connection State:            Connected
-    Session Disconnect:          23 Hours 53 Minutes Remaining
-    Client Address (IPv4):       10.0.0.2' \
-		./swiftbar/vpn-eta.1m.sh
-)
-
-# SwiftBar's format is `text | key=value ...`, with `---` between groups. The
-# first line is the menu bar; everything after the first `---` is the menu.
-printf '%s\n' "$MENU" | awk -v heightfile="$STATE/height" '
+# $1 is the plugin's output verbatim, $2 the file to write. Both pictures go
+# through this one function so they cannot drift apart in style.
+shoot() {
+	# SwiftBar's format is `text | key=value ...`, with `---` between groups. The
+	# first line is the menu bar; everything after the first `---` is the menu.
+	printf '%s\n' "$1" | awk -v heightfile="$STATE/height" '
 	function esc(s) {
 		gsub(/&/, "\\&amp;", s); gsub(/</, "\\&lt;", s); gsub(/>/, "\\&gt;", s)
 		return s
@@ -109,9 +111,35 @@ printf '%s\n' "$MENU" | awk -v heightfile="$STATE/height" '
 	}
 ' >"$HTML"
 
-HEIGHT=$(cat "$STATE/height")
-"$CHROME" --headless --disable-gpu --hide-scrollbars --force-device-scale-factor=2 \
-	--screenshot="$OUT" --window-size="560,$HEIGHT" "file://$HTML" >/dev/null 2>&1
+	height=$(cat "$STATE/height")
+	"$CHROME" --headless --disable-gpu --hide-scrollbars --force-device-scale-factor=2 \
+		--screenshot="$2" --window-size="560,$height" "file://$HTML" >/dev/null 2>&1
 
-[ -s "$OUT" ] || { echo "Chrome produced no image" >&2; exit 1; }
-echo "wrote $OUT"
+	[ -s "$2" ] || { echo "Chrome produced no image for $2" >&2; exit 1; }
+	echo "wrote $2"
+}
+
+run_plugin() {
+	VPN_ETA_CONFIG=/dev/null \
+		VPN_ETA_STATE_DIR="$STATE" \
+		VPN_ETA_LABEL="🦍" \
+		VPN_ETA_COMPACT=1 \
+		"$@" ./swiftbar/vpn-eta.1m.sh
+}
+
+shoot "$(run_plugin env VPN_ETA_TEST_STATS='    Connection State:            Connected
+    Session Disconnect:          23 Hours 53 Minutes Remaining
+    Client Address (IPv4):       10.0.0.2')" "$OUT"
+
+# The client that will not answer. Both halves are substituted: the reply, and
+# the ifconfig reading the tunnel probes depend on — without the second this
+# picture would show whatever VPN the machine rendering it happened to have up,
+# which is not a picture of anything.
+shoot "$(run_plugin env \
+	VPN_ETA_TEST_IFCONFIG='lo0: flags=8049<UP,LOOPBACK,RUNNING,MULTICAST> mtu 16384
+	inet 127.0.0.1 netmask 0xff000000
+utun4: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 1300
+	inet 10.0.0.2 --> 10.0.0.2 netmask 0xffffffff' \
+	VPN_ETA_TEST_STATS='Overall: not ok
+LaunchDaemon(com.cisco.secureclient.vpn.service.agent.plist) status: disabled
+Cisco Secure Client (version 5.1.14.145) release.')" "$OUT_SILENT"

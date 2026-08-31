@@ -174,7 +174,11 @@ printed. Check it against Preferences → General → Plugin Folder.
 **"Cisco Secure Client has N saved profiles".** Set `VPN_ETA_HOST` — the message lists the
 profiles and the exact line to add.
 
-**`VPN ?` with "A tunnel is up but the session could not be read".** The `vpn` binary is there
+**`VPN ?` with "A tunnel is up but the session could not be read".**
+
+![The menu when Cisco will not answer](docs/menu-silent.png)
+
+The `vpn` binary is there
 and something is bound to a `utun`, but the client would not say what. The line under it is
 the client's own reply, and it is the one to read: `did not answer within 12s` is a watchdog
 firing, anything after `said:` is Cisco's own account. Run
