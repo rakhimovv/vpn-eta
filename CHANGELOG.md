@@ -3,6 +3,23 @@
 Notable changes. Dates are release dates; the format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.1.1] — 2026-08-31
+
+### Fixed
+
+- A client that would not answer produced one sentence — `Cisco Secure Client did not answer` —
+  for three different repairs: a VPN service that never came up, a call that ran out of time,
+  and a reply this parse does not recognise. The client's own reply names which, and the menu
+  was throwing it away, so a report of a silent client arrived with nothing in it to act on.
+  The menu now quotes the client (`Cisco Secure Client said: …`) or blames the clock
+  (`… did not answer within 12s`). Verbatim rather than classified on purpose: Cisco's healthy
+  wording is not uniform — `LegacyLaunchDaemon(...): not registered` is the normal state on
+  5.1.14 — so a classifier would be guessing, and would guess silently.
+- `🕘 Session log` printed the logged event word as it stands, so a silent client showed as
+  `Session log: unreadable at 13:51` — which names the log rather than the session and reads
+  as a corrupt history. The log keeps the machine word, which is what makes it greppable; the
+  menu now says `client silent`, `changing state` and `dropped`.
+
 ## [1.1.0] — 2026-08-30
 
 ### Added

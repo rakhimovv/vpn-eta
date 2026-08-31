@@ -3,12 +3,12 @@
 # <xbar.title>VPN session ETA</xbar.title>
 # <xbar.desc>Shows the server-reported time remaining in the VPN session.</xbar.desc>
 # <xbar.author>Ruslan Rakhimov</xbar.author>
-# <xbar.version>v1.1.0</xbar.version>
+# <xbar.version>v1.1.1</xbar.version>
 
 # The plugin is COPIED into SwiftBar's folder, so the installed file has no link
 # back to the tag it came from. Without this a bug report can name the macOS,
 # SwiftBar and Cisco versions and still not say which vpn-eta is running.
-VERSION=1.1.0
+VERSION=1.1.1
 
 export PATH="/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin"
 
@@ -189,6 +189,74 @@ session_remaining() {
 # ever render as "off".
 stats_is_readable() {
 	[ -n "$(connection_state "$1")" ] || [ -n "$(session_remaining "$1")" ]
+}
+
+# Cisco puts a complaint on a `>> error:` line, and otherwise opens with its own
+# verdict on the launchd jobs — `Overall: ok` on a healthy 5.1.14. So: the
+# complaint if there is one, else whatever it led with. Deliberately not a
+# healthy/unhealthy classifier over those audit lines; the healthy wording is not
+# uniform (`LegacyLaunchDaemon(...): not registered` is the normal state here),
+# so a classifier would be guessing and would guess silently. Quoting the client
+# verbatim cannot be wrong about what the client said.
+#
+# The version banner is dropped because it names no cause — the plugin already
+# reports its own version, and Cisco's belongs in the bug report, not the menu.
+#
+# At most a hundred characters, cut between words: this lands in a menu as wide
+# as its widest item, and half a word is not a shorter sentence.
+client_complaint() {
+	printf '%s\n' "$1" | tr -d '\r' | awk '
+		# Cut at the budget, then back off to a word boundary — but only as far
+		# as the last fifth of it. Keeping whole words by dropping the one that
+		# straddles the cut is how a 300-character error line renders as
+		# `error:…`, which says less than the sentence this whole function
+		# replaced; a clipped word still names the error. So the boundary is a
+		# preference with a floor under it, not a rule.
+		function shorten(s,   cut, i) {
+			if (length(s) <= 100) return s
+			cut = substr(s, 1, 99)
+			for (i = 99; i > 79; i--) {
+				if (substr(cut, i, 1) == " ") {
+					cut = substr(cut, 1, i - 1)
+					break
+				}
+			}
+			return cut "…"
+		}
+		# The trailing full stop goes because this text is quoted into the middle
+		# of a sentence — the extrapolating branch appends ", last confirmed Nm
+		# ago" to it, and `has failed., last confirmed` is the collision.
+		{ sub(/^[[:space:]]+/, ""); sub(/[[:space:]]+$/, ""); sub(/\.$/, "") }
+		$0 == "" { next }
+		/^>>[[:space:]]*(error|warning)/ {
+			sub(/^>>[[:space:]]*/, "")
+			print shorten($0)
+			# `exit` runs END on the way out, so without this the fallback prints
+			# a second line under the complaint — and a second line here is a
+			# second SwiftBar menu item, which strips the params off the first.
+			printed = 1
+			exit
+		}
+		first == "" && !/^Copyright/ && !/^Cisco Secure Client \(version/ { first = $0 }
+		END { if (!printed && first != "") print shorten(first) }
+	'
+}
+
+# One sentence used to cover three different repairs — a stopped daemon, a call
+# that ran out of time, and a reply this parse does not recognise — so a report
+# of a silent client arrived with nothing in it to act on. The client's own words
+# separate them, and this is the last place they are still in hand.
+unreadable_detail() {
+	if [ "${stats_rc:-0}" -eq 124 ]; then
+		printf 'Cisco Secure Client did not answer within %ss\n' "$VPN_TIMEOUT_SECONDS"
+		return 0
+	fi
+	said=$(client_complaint "${stats:-}")
+	if [ -n "$said" ]; then
+		printf 'Cisco Secure Client said: %s\n' "$said"
+	else
+		printf '%s\n' "Cisco Secure Client sent no reply"
+	fi
 }
 
 read_stats() {
@@ -533,7 +601,22 @@ mute_button() {
 # session last changed and opens the log on a click.
 history_line() {
 	[ -s "$HISTORY_FILE" ] || return 0
-	last=$(tail -1 "$HISTORY_FILE" | awk -F'\t' '{ split($1, at, "T"); split(at[2], hm, ":"); printf "%s at %s:%s", $2, hm[1], hm[2] }')
+	last=$(tail -1 "$HISTORY_FILE" | awk -F'\t' '
+		{
+			split($1, at, "T")
+			split(at[2], hm, ":")
+			# The log keeps the machine word, which is what makes it greppable;
+			# the menu needs the one a person reads. `unreadable` was the worst
+			# of them, because it names the log rather than the session: a menu
+			# reporting a silent client read as a menu reporting a corrupt
+			# history, and the bug report came in against the wrong half.
+			event = $2
+			if (event == "unreadable") event = "client silent"
+			else if (event == "transition") event = "changing state"
+			else if (event == "down") event = "dropped"
+			printf "%s at %s:%s", event, hm[1], hm[2]
+		}
+	')
 	[ -n "$last" ] || return 0
 	echo "🕘  Session log: ${last} | href=file://$(urlencode "$HISTORY_FILE" "/") size=11"
 }
@@ -809,7 +892,7 @@ if [ "${VPN_ETA_TEST_STATS+x}" = x ]; then
 	stats=$VPN_ETA_TEST_STATS
 	stats_rc=${VPN_ETA_TEST_RC:-0}
 	if [ "$stats_rc" -ne 0 ] || ! stats_is_readable "$stats"; then
-		render_unreadable "Cisco Secure Client did not answer"
+		render_unreadable "$(unreadable_detail)"
 		exit 0
 	fi
 else
@@ -821,7 +904,7 @@ else
 	fi
 
 	if ! read_stats; then
-		render_unreadable "Cisco Secure Client did not answer"
+		render_unreadable "$(unreadable_detail)"
 		exit 0
 	fi
 fi

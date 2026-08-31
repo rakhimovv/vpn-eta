@@ -174,6 +174,18 @@ printed. Check it against Preferences → General → Plugin Folder.
 **"Cisco Secure Client has N saved profiles".** Set `VPN_ETA_HOST` — the message lists the
 profiles and the exact line to add.
 
+**`VPN ?` with "A tunnel is up but the session could not be read".** The `vpn` binary is there
+and something is bound to a `utun`, but the client would not say what. The line under it is
+the client's own reply, and it is the one to read: `did not answer within 12s` is a watchdog
+firing, anything after `said:` is Cisco's own account. Run
+`/opt/cisco/secureclient/bin/vpn stats` yourself for the rest of it: 5.1.14 opens with an audit
+of its own launchd jobs, where a VPN service that never came up says so — on a working install
+`LaunchDaemon(com.cisco.secureclient.vpn.service.agent.plist) status:` reads `enabled` and
+`vpnagentd` is running. That is Cisco's to repair, not the plugin's. The other cause is that
+the tunnel is not Cisco's at all but another client's — Tailscale and WireGuard each bind a
+`utun` of their own — in which case there is no Cisco session to count down and the reading is
+correct.
+
 **No notifications.** System Settings → Notifications → SwiftBar.
 
 **The session log looks empty after upgrading SwiftBar.** SwiftBar decides where each plugin

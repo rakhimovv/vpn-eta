@@ -172,6 +172,84 @@ case $(first_line "$out") in
 	;;
 esac
 
+# What the menu says about a silent client is the whole of what a bug report can
+# carry, and "did not answer" covered a stopped daemon, a call that ran out of
+# time and an unrecognised reply alike. Every branch of render_unreadable prints
+# the detail, so which one this host takes does not matter — grep the lot.
+#
+# Cisco's launchd audit, which is where a client that never came up says so. The
+# version banner sits in the same reply and names no cause, so it must lose.
+rm -f "$STATE_DIR/last-session"
+out=$(VPN_ETA_TEST_STATS='Overall: not ok
+LaunchDaemon(com.cisco.secureclient.vpn.service.agent.plist) status: disabled
+Cisco Secure Client (version 5.1.14.145) release.' "$PLUGIN")
+check "a silent client quotes its own audit, not a banner" "true" \
+	"$(printf '%s\n' "$out" | grep -q 'said: Overall: not ok' && echo true || echo false)"
+
+# The banner is what a client with nothing else to say leads with, and dropping
+# it must not leave the menu quoting a blank.
+out=$(VPN_ETA_TEST_STATS='Cisco Secure Client (version 5.1.14.145) release.
+
+Copyright (c) 2004 - 2025, Cisco Systems, Inc. All rights reserved.' "$PLUGIN")
+check "a reply that is only a banner is not quoted" "true" \
+	"$(printf '%s\n' "$out" | grep -q 'sent no reply' && echo true || echo false)"
+
+# A complaint outranks whatever the client printed before it.
+out=$(VPN_ETA_TEST_STATS='Overall: ok
+  >> error: Connection attempt has failed.' "$PLUGIN")
+# The trailing ` |` is load-bearing: the detail has to be ONE menu item. awk's
+# `exit` runs END on the way out, so the fallback line printed under the
+# complaint and stripped the params off it — a defect a bare text match misses.
+check "an error line outranks the lines above it" "true" \
+	"$(printf '%s\n' "$out" | grep -q 'said: error: Connection attempt has failed |' &&
+		echo true || echo false)"
+check "and the detail stays a single menu item" "1" \
+	"$(printf '%s\n' "$out" | grep -c 'Overall\|said:')"
+
+# The watchdog fired: the reply is not the evidence, its absence is.
+out=$(VPN_ETA_TEST_STATS=$CONNECTED VPN_ETA_TEST_RC=124 "$PLUGIN")
+check "a timed-out call blames the clock, not the reply" "true" \
+	"$(printf '%s\n' "$out" | grep -q 'did not answer within 12s' && echo true || echo false)"
+check "and the timeout wording follows the configured limit" "true" \
+	"$(env VPN_ETA_TIMEOUT=5 VPN_ETA_TEST_STATS="$CONNECTED" VPN_ETA_TEST_RC=124 "$PLUGIN" |
+		grep -q 'did not answer within 5s' && echo true || echo false)"
+
+# Nothing at all is its own diagnosis and must not be dressed as a quotation.
+out=$(VPN_ETA_TEST_STATS='' "$PLUGIN")
+check "an empty reply says so rather than quoting nothing" "true" \
+	"$(printf '%s\n' "$out" | grep -q 'sent no reply' && echo true || echo false)"
+
+# The menu is as wide as its widest item, so a runaway line is cut — between
+# words, because half a word is not a shorter sentence.
+long=$(awk 'BEGIN { for (i = 0; i < 40; i++) printf "widget " }')
+out=$(VPN_ETA_TEST_STATS=">> error: $long" "$PLUGIN")
+said=$(printf '%s\n' "$out" | sed -n 's/.*said: \(.*\) | color.*/\1/p')
+check "a runaway line is shortened" "true" \
+	"$([ "${#said}" -le 101 ] && echo true || echo false)"
+check "and it is cut between words" "true" \
+	"$(printf '%s' "$said" | grep -q 'widget…$' && echo true || echo false)"
+
+# The word boundary is a preference with a floor under it. Honouring it as a rule
+# drops a word longer than the whole budget, and the menu then says `error:…` —
+# less than the sentence this replaced, in the one case where the client's own
+# words are all there is.
+tok=$(awk 'BEGIN { for (i = 0; i < 300; i++) printf "x" }')
+out=$(VPN_ETA_TEST_STATS=">> error: $tok" "$PLUGIN")
+said=$(printf '%s\n' "$out" | sed -n 's/.*said: \(.*\) | color.*/\1/p')
+check "an over-long word is clipped, not dropped" "true" \
+	"$([ "${#said}" -ge 80 ] && [ "${#said}" -le 101 ] && echo true || echo false)"
+
+# The quote lands mid-sentence in the extrapolating branch, which appends
+# ", last confirmed Nm ago" — so `has failed., last confirmed` is a collision.
+out=$(VPN_ETA_TEST_STATS='  >> error: Connection attempt has failed.' "$PLUGIN")
+check "a quoted sentence loses its full stop" "false" \
+	"$(printf '%s\n' "$out" | grep -q 'has failed\.' && echo true || echo false)"
+# Paired with the above so it cannot pass by quoting nothing at all.
+check "and the sentence itself survives the trim" "true" \
+	"$(printf '%s\n' "$out" | grep -q 'said: error: Connection attempt has failed' &&
+		echo true || echo false)"
+rm -f "$STATE_DIR/last-session" "$STATE_DIR/last-event"
+
 # A stale countdown is extrapolated only while the cached address is still bound
 # to a utun, so seed the cache with the address this host actually has.
 addr=$(ifconfig 2>/dev/null | awk '
