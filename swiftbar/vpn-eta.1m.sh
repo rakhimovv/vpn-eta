@@ -3,12 +3,12 @@
 # <xbar.title>VPN session ETA</xbar.title>
 # <xbar.desc>Shows the server-reported time remaining in the VPN session.</xbar.desc>
 # <xbar.author>Ruslan Rakhimov</xbar.author>
-# <xbar.version>v1.1.2</xbar.version>
+# <xbar.version>v1.2.0</xbar.version>
 
 # The plugin is COPIED into SwiftBar's folder, so the installed file has no link
 # back to the tag it came from. Without this a bug report can name the macOS,
 # SwiftBar and Cisco versions and still not say which vpn-eta is running.
-VERSION=1.1.2
+VERSION=1.2.0
 
 export PATH="/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin"
 
@@ -63,6 +63,7 @@ EVENT_FILE=$STATE_DIR/last-event
 HISTORY_FILE=$STATE_DIR/history.log
 TEARDOWN_FILE=$STATE_DIR/expected-teardown
 MUTE_FILE=$STATE_DIR/muted-until
+INCIDENT_DIR=$STATE_DIR/incidents
 
 # What the menu bar says in front of the countdown. Two menu-bar items showing
 # "VPN" tell you nothing, so a second gateway can be labelled "Work" or "Lab".
@@ -102,7 +103,39 @@ WARN_MINUTES=$(number_or "${VPN_ETA_WARN_MINUTES:-60}" 60)
 # How long an extrapolated countdown stays trustworthy once the client stops
 # answering. Past this the plugin admits it does not know.
 STALE_LIMIT_MINUTES=$(number_or "${VPN_ETA_STALE_LIMIT:-45}" 45)
+# How long one run of Connecting / Reconnecting / Disconnecting may last before
+# it stops being a handover and starts being a tunnel that is stuck. A Wi-Fi
+# handover settles in seconds; minutes of it mean nothing is moving, and the
+# countdown on the bar is then the least useful true thing on the screen.
+# 0 switches the escalation off and leaves every transition looking routine.
+TRANSITION_LIMIT_MINUTES=$(number_or "${VPN_ETA_TRANSITION_LIMIT:-5}" 5)
 VPN_TIMEOUT_SECONDS=$(number_or "${VPN_ETA_TIMEOUT:-12}" 12)
+
+# `history.log` records THAT the tunnel changed state; the client's own log is
+# the only place that says WHY — which gateway address a reconnect was retrying,
+# whether the network went out from under it. That log is a rolling window, and
+# a much shorter one than it looks: measured on one Mac, the persistent store
+# held about six hours, so a wedge worth understanding over morning coffee is
+# already unreadable. Off by default because it is a diagnostic, not a feature
+# of the countdown; on, each interesting state change saves the window that led
+# up to it beside the history it explains.
+case ${VPN_ETA_INCIDENT_LOG:-} in
+'' | 0 | no | off | false) INCIDENT_LOG= ;;
+*) INCIDENT_LOG=1 ;;
+esac
+# Bounded by COUNT, never by age: the newest N are kept and the rest deleted, so
+# the directory has a ceiling instead of a growth rate. Fifteen busy minutes of
+# a real wedge measured 298 KB, a quiet fifteen under 100 KB — twenty of those
+# is single-digit megabytes for as long as the plugin runs.
+INCIDENT_KEEP=$(number_or "${VPN_ETA_INCIDENT_KEEP:-20}" 20)
+# Backward-looking, and wide enough to hold the cause rather than the symptom:
+# tonight's wedge showed the Wi-Fi handover, the gateway going unreachable and
+# eight retries inside twelve minutes. A per-minute plugin also learns about a
+# change up to a minute late, which this absorbs.
+INCIDENT_WINDOW_MINUTES=15
+# The macOS log reader, overridable so the suite can drive this path without a
+# machine that has ever run a VPN. Same seam as VPN_ETA_VPN_BIN.
+LOG_BIN=${VPN_ETA_LOG_BIN:-/usr/bin/log}
 # How long to wait for a freshly connected session to report its countdown.
 CONNECT_POLL_ATTEMPTS=$(number_or "${VPN_ETA_CONNECT_ATTEMPTS:-15}" 15)
 CONNECT_POLL_SLEEP=$(number_or "${VPN_ETA_CONNECT_SLEEP:-2}" 2)
@@ -171,6 +204,21 @@ field() {
 }
 
 connection_state() { field "Connection State:" "$1"; }
+
+# Cisco qualifies the state word in parentheses whenever it has more to say:
+# `Reconnecting (waiting for network connectivity)`, `Connected (session
+# expiring soon)`. The qualifier is the informative half, so the menu and the
+# history keep the field whole — but every branch that decides what a reading
+# MEANS compares the word, and comparing the whole field is how a live session
+# renders as `off`: a qualified spelling matches no arm of those `case`
+# statements and falls through to the disconnect path, the one verdict this
+# plugin may never reach on an ambiguous reading. Measured on a real client:
+# `Connected (session expiring soon)` logged a drop with 23 minutes still on
+# the clock, and the reconnect that outlives a Wi-Fi handover — the failure the
+# transition ladder exists for — arrives spelled `Reconnecting (waiting for
+# network connectivity)` and was rendered gray.
+state_word() { printf '%s\n' "${1%% (*}"; }
+
 client_address() {
 	addr=$(field "Client Address (IPv4):" "$1")
 	[ "$addr" = "Not Available" ] && addr=
@@ -432,7 +480,53 @@ record_event() {
 	printf '%s\n' "$1|$2" >"$EVENT_FILE" 2>/dev/null || return 1
 	printf '%s\t%s\t%s\n' "$(date +%Y-%m-%dT%H:%M:%S%z)" "$1" "$3" >>"$HISTORY_FILE" 2>/dev/null
 	trim_history
+	capture_incident "$1"
 	return 0
+}
+
+# Saves the client's own log for the window leading up to a state change, so the
+# reason survives the system store's eviction the way the one-line summary
+# already does. Reached only from record_event, and only on the tick that
+# actually wrote a line — so it runs about as often as the tunnel changes state,
+# not once a minute — and only past may_write_state, so a fixture run captures
+# nothing.
+capture_incident() {
+	[ -n "$INCIDENT_LOG" ] || return 0
+	# A `connected` needs no explanation; the four that follow are the ones
+	# somebody reads the history to understand.
+	case $1 in
+	transition | disconnected | down | unreadable) ;;
+	*) return 0 ;;
+	esac
+	[ -x "$LOG_BIN" ] || return 0
+	mkdir -p "$INCIDENT_DIR" 2>/dev/null || return 0
+	file=$INCIDENT_DIR/$(date +%Y-%m-%dT%H%M%S)-$1.log
+	"$LOG_BIN" show --last "${INCIDENT_WINDOW_MINUTES}m" \
+		--predicate 'process == "vpnagentd"' --style compact \
+		>"$file" 2>/dev/null
+	# The reader prints a header even when it matched nothing, so "not empty" is
+	# not the test — a file holding only that header says "nothing happened"
+	# where it means "this did not work", and the second is the one worth not
+	# leaving behind.
+	captured=$(wc -l <"$file" 2>/dev/null | tr -d ' ')
+	case $captured in '' | *[!0-9]*) captured=0 ;; esac
+	if [ "$captured" -lt 2 ]; then
+		rm -f "$file"
+		return 0
+	fi
+	trim_incidents
+}
+
+trim_incidents() {
+	# The names are timestamps, so the shell's own glob order is chronological
+	# and the oldest is always $1 — no parsing of `ls` output, and no `find`
+	# that would have to be told what a vpn-eta capture looks like.
+	set -- "$INCIDENT_DIR"/*.log
+	[ -e "$1" ] || return 0
+	while [ $# -gt "$INCIDENT_KEEP" ]; do
+		rm -f "$1"
+		shift
+	done
 }
 
 trim_history() {
@@ -540,6 +634,18 @@ announce_drop() {
 	'' | *[!0-9]*) notify "VPN disconnected" "The tunnel is down." ;;
 	*) notify "VPN disconnected" "The session ended with $(format_minutes "$1") of its time unused." ;;
 	esac
+}
+
+# A renegotiation is routine and silent; one that will not end is the failure
+# the whole carried-deadline rung exists to survive, and it looks exactly like a
+# healthy session from the menu bar — which is how a wedged reconnect gets
+# noticed an hour later, by hand. Fires once: the caller only reaches this when
+# record_event has just written the escalation down.
+announce_stuck() {
+	expected_teardown && return 0
+	mute_remaining >/dev/null && return 0
+	notify "VPN $1" \
+		"$1 for $(format_minutes "$2") with no session. Start a new session from the menu bar if it does not settle."
 }
 
 # Sets cached_minutes / cached_address / cached_age_minutes, or returns 1.
@@ -704,7 +810,7 @@ start_new_session() {
 		return 1
 	fi
 
-	case $(connection_state "$stats") in
+	case $(state_word "$(connection_state "$stats")") in
 	Connected | Connecting | Reconnecting | Disconnecting)
 		has_session=1
 		echo "This will disconnect the current VPN and start a new session."
@@ -925,6 +1031,9 @@ else
 fi
 
 state=$(connection_state "$stats")
+# What the state MEANS is the word; what it SAYS is the whole field. Every
+# comparison below reads the first, every render and log line the second.
+bare_state=$(state_word "$state")
 # The client owns the deadline. Its Session Disconnect field is more
 # reliable than an ETA derived from the uptime of a long-lived daemon — but it
 # is optional, so its absence says nothing about whether the tunnel is up.
@@ -936,22 +1045,86 @@ remaining=$(session_remaining "$stats")
 # disconnect that never happened. The deadline has not moved, so it is carried.
 # The same three states already count as a live session at the teardown prompt;
 # this is what keeps the two halves of the script telling the same story.
+#
+# Carried is not the same as vouched for, though, and the first version of this
+# branch drew the carried number exactly as a confirmed one: a green countdown
+# over a tunnel passing no traffic, with the word Reconnecting a click away in
+# the dropdown nobody had opened. So the bar keeps the number and marks it — the
+# ellipsis this branch already shows when it has nothing to carry — and a
+# transition that outlives any plausible handover says so in red, once.
 if [ -z "$remaining" ]; then
-	case $state in
+	case $bare_state in
 	Connecting | Reconnecting | Disconnecting)
-		record_event transition "" "state=$state"
-		if load_state && cache_is_fresh; then
+		# How long THIS transition has run, which is not how old the cached
+		# countdown is: a Mac that slept nine hours and woke into an ordinary
+		# reconnect has a nine-hour-old reading and a one-minute-old handover,
+		# and measuring the first alarms on every wake — the exact false alarm
+		# the rest of this branch exists to avoid.
+		#
+		# The clock rides in the dedupe identity rather than a sixth state file:
+		# the identity is unchanged for as long as one transition lasts, so its
+		# start epoch survives every tick, and any other event overwrites it.
+		# `stuck` rides there too, latched — re-deciding it each minute would
+		# re-announce it each minute.
+		stuck=
+		case $(cat "$EVENT_FILE" 2>/dev/null) in
+		'transition|'*)
+			transition_id=$(cat "$EVENT_FILE" 2>/dev/null)
+			transition_id=${transition_id#transition|}
+			started=${transition_id%% *}
+			case $transition_id in *' stuck') stuck=1 ;; esac
+			;;
+		*) started= ;;
+		esac
+		case $started in '' | *[!0-9]*) started=$(now_epoch) ;; esac
+		transition_minutes=$((($(now_epoch) - started) / 60))
+		[ "$transition_minutes" -ge 0 ] || transition_minutes=0
+		if [ -z "$stuck" ] && [ "$TRANSITION_LIMIT_MINUTES" -gt 0 ] &&
+			[ "$transition_minutes" -ge "$TRANSITION_LIMIT_MINUTES" ]; then
+			stuck=1
+		fi
+		# Only the tick that CHANGES the identity writes, so becoming stuck is
+		# one log line and one notification, and staying stuck is neither.
+		if record_event transition "$started${stuck:+ stuck}" \
+			"state=$state for=${transition_minutes}m"; then
+			# The word, not the field: a notification title is a fixed width
+			# and `Reconnecting (waiting for network connectivity)` is clipped
+			# mid-qualifier there. The menu behind it carries the whole thing.
+			[ -n "$stuck" ] && announce_stuck "$bare_state" "$transition_minutes"
+		fi
+		have_cache=
+		load_state && have_cache=1
+		if [ -n "$have_cache" ] && cache_is_fresh; then
 			short=$(format_minutes "$cached_minutes")
-			echo "${BAR_PREFIX}$(format_menubar "$cached_minutes") | color=$(color_for_minutes "$cached_minutes")"
+			# The countdown is still true — the gateway's deadline does not pause
+			# for a reconnect — but the connection under it is not, and a bare
+			# green number says the opposite. The ellipsis is the same mark this
+			# branch already shows when it has no number to carry, and it is what
+			# survives being read in a hurry; the colour is the second telling.
+			if [ -n "$stuck" ] || [ "$cached_minutes" -le "$CRITICAL_MINUTES" ]; then
+				bar_color=red
+			else
+				bar_color=orange
+			fi
+			echo "${BAR_PREFIX}$(format_menubar "$cached_minutes")… | color=$bar_color"
 			echo "---"
 			echo "🔐  about ${short} remaining | size=14"
 			echo "${state}… | color=orange size=12"
-			echo "Deadline carried from a reading ${cached_age_minutes}m ago | color=gray size=12"
+			if [ -n "$stuck" ]; then
+				echo "${state} for ${transition_minutes}m — the tunnel may be stuck | color=red size=12"
+			else
+				echo "Deadline carried from a reading ${cached_age_minutes}m ago | color=gray size=12"
+			fi
 		else
-			echo "${BAR_PREFIX}… | color=orange"
+			if [ -n "$stuck" ]; then bar_color=red; else bar_color=orange; fi
+			echo "${BAR_PREFIX}… | color=$bar_color"
 			echo "---"
 			echo "🔐  ${state}… | color=orange size=14"
-			echo "No countdown yet for this session | color=gray size=12"
+			if [ -n "$stuck" ]; then
+				echo "${state} for ${transition_minutes}m — the tunnel may be stuck | color=red size=12"
+			else
+				echo "No countdown yet for this session | color=gray size=12"
+			fi
 		fi
 		echo "---"
 		menu_actions active
@@ -960,7 +1133,7 @@ if [ -z "$remaining" ]; then
 	esac
 fi
 
-if [ -z "$remaining" ] && [ "$state" != Connected ]; then
+if [ -z "$remaining" ] && [ "$bare_state" != Connected ]; then
 	# Read the cache before clearing it: how much of the session went unused is
 	# the one thing worth saying in the notification, and it lives there.
 	load_state || :
@@ -1038,6 +1211,10 @@ echo "---"
 echo "🔐  ${short} remaining | color=$color size=14"
 echo "Session limit set by the gateway | color=gray size=12"
 echo "Cisco Secure Client: ${remaining} | color=gray size=12"
+# The whole field on purpose, where the branches above compare the word: a bare
+# `Connected` is the unremarkable case and says nothing worth a line, while
+# `Connected (session expiring soon)` is the client volunteering something the
+# countdown alone does not say.
 if [ -n "$state" ] && [ "$state" != Connected ]; then
 	echo "Connection state: ${state} | color=orange size=12"
 fi

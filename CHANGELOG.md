@@ -3,6 +3,44 @@
 Notable changes. Dates are release dates; the format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.2.0] — 2026-09-01
+
+### Added
+
+- `VPN_ETA_TRANSITION_LIMIT` (default `5` minutes). A reconnect that outlives any plausible
+  Wi-Fi handover is a tunnel that is stuck rather than one that is settling: past this the menu
+  bar turns red, the menu says `Reconnecting for 12m — the tunnel may be stuck` in place of the
+  line about where the number came from, and one notification carries it off the screen nobody is
+  looking at. It fires once per transition, respects the mute, and stays quiet for a teardown you
+  started yourself. `0` switches the escalation off. The clock is the transition's own — kept in
+  the state file that already dedupes the log, so a Mac waking from a long sleep into an ordinary
+  handover starts it fresh instead of alarming on the age of the reading it slept through.
+
+- `VPN_ETA_INCIDENT_LOG` (off by default) and `VPN_ETA_INCIDENT_KEEP` (default `20`). With the
+  first on, a reconnect, a drop or an unreadable reply saves the Cisco client's own log for the
+  previous fifteen minutes into `incidents/` beside `history.log`. The history line says the
+  tunnel changed state; only the client's log says which gateway address a reconnect was retrying,
+  and macOS ages the client's messages out within hours — measured on one Mac, a query over one
+  midday window returned hundreds of lines at 19:00 and a single line by 23:00, while other
+  processes' messages from that identical minute were untouched. Bounded by count and not by age,
+  so the directory has a ceiling rather than a growth rate.
+
+### Changed
+
+- Cisco qualifies its `Connection State` in parentheses — `Reconnecting (waiting for network
+  connectivity)`, `Connected (session expiring soon)` — and every branch compared the whole field,
+  so those readings matched no arm and fell through to the disconnect path. A live session
+  rendered as a gray `off` with a drop notification behind it: on the Mac this was found on, 12 of
+  the 20 disconnects the plugin had ever recorded were this, 6 of them on a state the client
+  spelled `Connected`. Comparisons now read the state word; the menu and the history keep the
+  whole field, which is the half that says something.
+
+- A carried deadline is now marked in the menu bar: `6h 20m…` in orange while the client reports
+  Connecting, Reconnecting or Disconnecting, rather than the same green `6h 20m` a confirmed
+  reading gets. Carrying the deadline across a reconnect stays right — the gateway's clock does
+  not pause for one — but drawing it as confirmed left the menu bar looking healthy over a tunnel
+  passing no traffic, with the word `Reconnecting` a click away in a dropdown nobody had opened.
+
 ## [1.1.2] — 2026-08-31
 
 ### Added

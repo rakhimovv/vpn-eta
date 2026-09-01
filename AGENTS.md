@@ -70,6 +70,15 @@ deadline says nothing), and — when the client is silent — whether that addre
 bound to a `utun`. A transition state (`Connecting` / `Reconnecting` / `Disconnecting`) carries the
 deadline forward instead of clearing it; a Wi-Fi handover is not a session ending.
 
+Carried is not confirmed, and the menu bar says which: a transition marks the number with an
+ellipsis and turns orange, then red once one transition has run past `VPN_ETA_TRANSITION_LIMIT`
+minutes — or once the carried countdown is itself critical, which outranks it. The whole clock
+rides in `record_event`'s dedupe identity (`transition|<start epoch>[ stuck]`): the identity holds
+for as long as one transition lasts, so its start survives every tick without a sixth state file,
+and only the tick that changes it writes a log line or notifies. **Time the transition, never the
+cached reading** — they differ by exactly the case that matters, a Mac waking from a nine-hour
+sleep into a one-minute handover, and timing the reading alarms on every wake.
+
 Touch a render branch and you owe both directions a check. The suite pairs them deliberately:
 an ambiguous read must never claim `off`, and a real disconnect must still be announced —
 including the common one that leaves through `Reconnecting`.
@@ -85,6 +94,17 @@ waiting to be remembered).
 Both of those last two are deadlines that suppress a notification, and neither suppresses a
 *log line* — the history is what an unexplained drop is reconstructed from later, and it is
 not an interruption anybody asked to be spared.
+
+A sixth entry, `incidents/`, appears only under `VPN_ETA_INCIDENT_LOG=1` — README says what it is
+for and why the system log cannot be relied on to still hold it. What the README does not say:
+it fires from inside `record_event`, after the history line and therefore already past
+`may_write_state`, and **only on the tick that actually wrote one**. That is what makes a
+synchronous 2–4 second `log show` affordable — it runs about as often as the tunnel changes
+state, not once a minute — so this path needs no background job and nothing for SwiftBar to
+orphan. `trim_incidents` bounds the directory by COUNT, and leans on the filenames being
+timestamps so the shell's glob order is already chronological: no `ls` output is parsed and no
+`find` has to be told what a capture looks like. `VPN_ETA_LOG_BIN` is the seam that lets the
+suite drive all of it on a machine that has never run a VPN.
 
 `STATE_DIR` under SwiftBar has **two** shapes, and which one you get is not a preference anyone
 sets: SwiftBar names a plugin's data directory after the plugin FILE while the plugin folder is
@@ -111,6 +131,7 @@ make a test pass.
 | `VPN_ETA_TEST_PERSIST` | opts a fixture run back into writing state |
 | `VPN_ETA_VPN_BIN` | a fake Cisco binary — the only way to test the start path |
 | `VPN_ETA_NOTIFY_SINK` | collects notifications in a file instead of delivering them |
+| `VPN_ETA_LOG_BIN` | a fake `/usr/bin/log` — the only way to test the incident capture |
 | `VPN_ETA_CONFIG` | the config file to source (`/dev/null` for documented defaults) |
 
 ## Adding a setting

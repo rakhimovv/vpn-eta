@@ -62,7 +62,8 @@ Keep the clone — the plugin is copied out and does not need it at runtime, but
 |---|---|
 | `VPN 6h 20m` | Cisco reported this just now. Green; orange under an hour, red under fifteen minutes. |
 | `VPN 2h 44m` | Same number, extrapolated — the client went quiet but its tunnel is still bound. The menu says "estimated" and how old the reading is. |
-| `VPN …` | Connecting, reconnecting or disconnecting. The deadline is carried across; a reconnect is not a session ending. |
+| `VPN 2h 44m…` | Connecting, reconnecting or disconnecting. The deadline is carried across — a reconnect is not a session ending — and the ellipsis says it is carried rather than confirmed. Orange; red once that reconnect has run five minutes without settling, or once the carried countdown is itself under fifteen minutes. |
+| `VPN …` | The same, with no deadline left to carry. |
 | `VPN on` | Connected, no countdown reported. Some gateways send none. |
 | `VPN ?` | A tunnel is up but unreadable — or Cisco Secure Client is missing. |
 | `VPN off` | A reported disconnect, or no session *and* no tunnel. |
@@ -100,7 +101,10 @@ reads no `~/.zshrc`. A variable exported there reaches a terminal run and never 
 | `VPN_ETA_VPN_BIN` | autodetected | The Cisco CLI, if it is not at a standard path. |
 | `VPN_ETA_TIMEOUT` | `12` | Seconds to wait for one CLI call. |
 | `VPN_ETA_STALE_LIMIT` | `45` | Minutes an extrapolated countdown stays trustworthy. |
+| `VPN_ETA_TRANSITION_LIMIT` | `5` | Minutes one reconnect may run before it counts as stuck rather than settling. `0` never escalates. |
 | `VPN_ETA_TEARDOWN_GRACE` | `300` | Seconds after your own teardown during which a drop is not announced. |
+| `VPN_ETA_INCIDENT_LOG` | off | On a reconnect, drop or unreadable reply, save the client's own log for the previous 15 minutes into `incidents/` beside `history.log`. |
+| `VPN_ETA_INCIDENT_KEEP` | `20` | How many captures to keep. The oldest are deleted, so the directory has a ceiling rather than a growth rate. |
 | `VPN_ETA_CONNECT_ATTEMPTS` | `15` | How many times to poll a new session for its countdown. |
 | `VPN_ETA_CONNECT_SLEEP` | `2` | Seconds between those polls. |
 
@@ -135,7 +139,9 @@ has a window to print to.
 
 ## Notifications and the log
 
-A notification at 60 and again at 15 minutes left, then one if the tunnel drops on its own.
+A notification at 60 and again at 15 minutes left, then one if the tunnel drops on its own, and
+one if a reconnect will not settle — a Wi-Fi handover takes seconds, so five minutes of
+`Reconnecting` is a session to start again rather than one to wait out.
 Each mark fires once per session, so a Mac that slept through both wakes to one warning
 rather than a stack. Tearing the session down yourself is not announced. SwiftBar has to be
 allowed to send notifications once (System Settings → Notifications → SwiftBar).
@@ -158,6 +164,15 @@ per-minute plugin does not fill a log with "still up". `🕘 Session log` opens 
 Those timestamps make Cisco's own account findable: `log show --start "2026-08-24 20:00:00"
 --predicate 'process == "vpnagentd"'` names the reason outright. Use the full
 `/usr/bin/log` — in zsh, `log` alone is a builtin that quietly does something else.
+
+That account does not keep, and it is the client's own lines that go first. Measured on one Mac
+inside a single evening: the same query over one midday window printed hundreds of lines at 19:00
+and a single line by 23:00 — while `dasd` and `WindowServer` messages from that identical minute
+were still there in full, and the store as a whole still reached back thirteen days. macOS ages
+messages out on a schedule of its own and the VPN client's are on a short one, so the history line
+survives and the reason behind it does not. Set `VPN_ETA_INCIDENT_LOG=1` and each reconnect, drop
+or unreadable reply saves its previous fifteen minutes into `incidents/` beside `history.log`,
+keeping the newest `VPN_ETA_INCIDENT_KEEP` and deleting the rest.
 
 ## Troubleshooting
 

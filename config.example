@@ -86,9 +86,33 @@
 # than showing a number it cannot stand behind.
 #VPN_ETA_STALE_LIMIT=45
 
+# How long one run of Connecting / Reconnecting / Disconnecting may last before
+# the plugin stops calling it routine, in minutes. A Wi-Fi handover settles in
+# seconds; past this the menu bar goes red and one notification says so, because
+# a wedged reconnect looks exactly like a healthy session from a distance. The
+# clock is that transition's own, so a Mac waking from a long sleep starts it
+# fresh. 0 switches the escalation off.
+#VPN_ETA_TRANSITION_LIMIT=5
+
 # Grace period, in seconds, during which a disconnect is treated as one you
 # asked for rather than a drop worth announcing.
 #VPN_ETA_TEARDOWN_GRACE=300
+
+# Save the Cisco client's own log for the fifteen minutes leading up to a
+# reconnect, a drop or an unreadable reply, into an `incidents/` directory
+# beside history.log. history.log records THAT the tunnel changed state; only
+# the client's log says which gateway address a reconnect was retrying — and
+# macOS ages the client's messages out within hours while keeping other
+# processes' from the same minute, so a wedge is already unexplainable by the
+# next morning unless something wrote it down at the time. Off by default; it is
+# a diagnostic, and it reads the system log.
+#VPN_ETA_INCIDENT_LOG=1
+
+# How many captures to keep. Bounded by count and not by age, so the directory
+# has a ceiling rather than a growth rate: fifteen busy minutes measured 298 KB
+# and a quiet fifteen under 100 KB, which puts twenty of them in single-digit
+# megabytes for as long as the plugin runs.
+#VPN_ETA_INCIDENT_KEEP=20
 
 # How long to wait for a freshly connected session to report its countdown:
 # attempts, and seconds between them.

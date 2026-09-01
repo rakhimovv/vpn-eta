@@ -385,7 +385,12 @@ run_start() {
 	printf '%s\n' "$2" >"$FAKE_DIR/state"
 	: >"$FAKE_DIR/log"
 	shift 2
-	printf '%s\n' "$answer" | env "$@" \
+	# `env -u` first, assignments after, so a case that wants SwiftBar still gets
+	# it. Without the scrub these two leak in from whoever runs the suite — a
+	# shell started by SwiftBar itself exports both — and the case that asserts a
+	# terminal run refreshes NOTHING passes or fails on the ambient environment
+	# rather than on the plugin. Measured: it failed on an untouched checkout.
+	printf '%s\n' "$answer" | env -u SWIFTBAR -u SWIFTBAR_PLUGIN_PATH "$@" \
 		VPN_ETA_VPN_BIN="$FAKE_DIR/vpn" \
 		VPN_ETA_CONNECT_ATTEMPTS=2 VPN_ETA_CONNECT_SLEEP=0 \
 		"$PLUGIN" start
@@ -591,6 +596,7 @@ reset_session_state() {
 	rm -f "$STATE_DIR/last-session" "$STATE_DIR/last-event" \
 		"$STATE_DIR/history.log" "$STATE_DIR/expected-teardown" \
 		"$STATE_DIR/muted-until" "$NOTIFY_SINK"
+	rm -rf "$STATE_DIR/incidents"
 }
 
 notifications() {
@@ -607,20 +613,28 @@ last_event() { awk -F'\t' 'END { print $2 }' "$STATE_DIR/history.log" 2>/dev/nul
 # ordinary thing that happens to a laptop VPN, and the whole premise of this
 # plugin is that it does not call an ambiguous reading a disconnect.
 
-for transient in Connecting Reconnecting Disconnecting; do
+# The last spelling is the one a Wi-Fi handover actually produces, and it is
+# the whole reason the word is compared rather than the field: read literally it
+# matches no transition arm, and every check below fails on a gray `off`.
+for transient in Connecting Reconnecting Disconnecting \
+	'Reconnecting (waiting for network connectivity)'; do
 	reset_session_state
-	seed_cache 600 180 10.1.1.1
+	seed_cache 60
 	out=$(VPN_ETA_TEST_STATS="    Connection State:            $transient" \
 		VPN_ETA_TEST_PERSIST=1 "$PLUGIN")
 
 	check "$transient does not render as off" "false" \
 		"$(printf '%s\n' "$out" | head -1 | grep -q 'off' && echo true || echo false)"
 	# The deadline did not move because the tunnel is renegotiating, so the
-	# countdown must survive rather than be thrown away and re-learned.
-	check "$transient keeps the cached countdown" "VPN 2h 50m" \
+	# countdown must survive rather than be thrown away and re-learned — and it
+	# must not be drawn as a confirmed one, which is the whole of what the menu
+	# bar can say. The ellipsis is what separates the two.
+	check "$transient keeps the cached countdown, marked" "VPN 2h 59m…" \
 		"$(printf '%s\n' "$out" | head -1 | sed 's/ |.*//')"
+	check "$transient does not leave the bar looking healthy" "color=orange" \
+		"$(printf '%s\n' "$out" | head -1 | sed 's/.* | //')"
 	check "$transient says what is happening" "${transient}…" \
-		"$(printf '%s\n' "$out" | awk -F' \\| ' '/…/ { print $1; exit }' | sed 's/^.*🔐  //')"
+		"$(printf '%s\n' "$out" | sed -n '4s/ | .*//p')"
 	# The regression that matters most: a false "VPN disconnected" alert.
 	check "$transient raises no drop notification" "0" "$(notifications)"
 	# And the cache must still be there for the next run.
@@ -629,6 +643,101 @@ for transient in Connecting Reconnecting Disconnecting; do
 	check "$transient still offers to tear the session down" "true" \
 		"$(printf '%s\n' "$out" | grep -q 'Disconnects the current session first' && echo true || echo false)"
 done
+
+# A renegotiation that will not end. It renders exactly like a healthy session
+# minus the mark, which is how one gets noticed an hour later by hand — so past
+# VPN_ETA_TRANSITION_LIMIT the bar goes red, the menu says why, and the
+# notification carries it off the screen the user is not looking at.
+#
+# The clock is the transition's own, kept in the dedupe identity, and seeding it
+# is how these cases reach minute five without waiting five minutes.
+seed_transition() {
+	printf 'transition|%s\n' "$(($(date +%s) - $1))" >"$STATE_DIR/last-event"
+}
+
+reconnecting() {
+	# $1 the age of the cached reading in seconds, $2 the age of the transition,
+	# rest environment.
+	reset_session_state
+	seed_cache "$1"
+	seed_transition "$2"
+	shift 2
+	env "$@" VPN_ETA_TEST_STATS='    Connection State:            Reconnecting' \
+		VPN_ETA_TEST_PERSIST=1 "$PLUGIN"
+}
+
+out=$(reconnecting 240 240)
+check "a reconnect inside the limit is still routine" "VPN 2h 56m… | color=orange" \
+	"$(first_line "$out")"
+check "and says where its number came from" "Deadline carried from a reading 4m ago" \
+	"$(printf '%s\n' "$out" | sed -n '5s/ | .*//p')"
+check "and interrupts nobody" "0" "$(notifications)"
+
+out=$(reconnecting 600 600)
+check "a reconnect past the limit turns red" "VPN 2h 50m… | color=red" "$(first_line "$out")"
+check "and times the transition, not the reading" \
+	"Reconnecting for 10m — the tunnel may be stuck" \
+	"$(printf '%s\n' "$out" | sed -n '5s/ | .*//p')"
+check "and says so where it will be seen" "VPN Reconnecting" "$(last_notification)"
+check "and the escalation is logged" "transition" "$(last_event)"
+# Every minute of a stuck tunnel is another run of this branch; only the first
+# may interrupt, or a wedged reconnect becomes a notification per minute. The
+# latch is in the event file, so this second run also proves the identity kept
+# it rather than the clock being re-read from a rewritten stamp.
+VPN_ETA_TEST_STATS='    Connection State:            Reconnecting' \
+	VPN_ETA_TEST_PERSIST=1 "$PLUGIN" >/dev/null
+check "but only once, however long it stays stuck" "1" "$(notifications)"
+
+# The regression that made this clock the transition's own: a Mac asleep for
+# nine hours wakes into an ordinary handover, and the cached reading is nine
+# hours old while the reconnect is one minute old. Timing the reading alarms on
+# every wake — the exact false alarm the whole branch exists to avoid.
+out=$(reconnecting 32400 0)
+check "a wake into a fresh reconnect is not called stuck" "VPN … | color=orange" \
+	"$(first_line "$out")"
+check "and wakes nobody" "0" "$(notifications)"
+
+# ... and the same clock is the reason a transition with nothing cached still
+# escalates: there is no reading to age, and a stuck Connecting is stuck either
+# way. The countdown is gone here, the alarm is not.
+reset_session_state
+seed_transition 600
+out=$(VPN_ETA_TEST_STATS='    Connection State:            Connecting' \
+	VPN_ETA_TEST_PERSIST=1 "$PLUGIN")
+check "a stuck transition with no countdown still escalates" "VPN … | color=red" \
+	"$(first_line "$out")"
+check "and names the state it is stuck in" "Connecting for 10m — the tunnel may be stuck" \
+	"$(printf '%s\n' "$out" | sed -n '4s/ | .*//p')"
+check "and interrupts once" "VPN Connecting" "$(last_notification)"
+
+# Mute covers this like every other alert — the menu bar is still red, so the
+# fact is not hidden, only the interruption.
+reset_session_state
+seed_cache 600
+seed_transition 600
+"$PLUGIN" mute
+out=$(VPN_ETA_TEST_STATS='    Connection State:            Reconnecting' \
+	VPN_ETA_TEST_PERSIST=1 "$PLUGIN")
+check "a mute silences the stuck alert" "0" "$(notifications)"
+check "and the menu bar still shows it" "VPN 2h 50m… | color=red" "$(first_line "$out")"
+rm -f "$STATE_DIR/muted-until"
+
+# A teardown the plugin started sits in Disconnecting on purpose; alarming about
+# it would undo the whole point of the expected-teardown mark.
+reset_session_state
+seed_cache 600
+seed_transition 600
+date +%s >"$STATE_DIR/expected-teardown"
+VPN_ETA_TEST_STATS='    Connection State:            Disconnecting' \
+	VPN_ETA_TEST_PERSIST=1 "$PLUGIN" >/dev/null
+check "our own teardown does not raise a stuck alert" "0" "$(notifications)"
+
+# Zero is off, the way it is for the mute item — and must not read as "every
+# transition is stuck", which is what a bare comparison would make of it.
+out=$(reconnecting 7200 7200 VPN_ETA_TRANSITION_LIMIT=0)
+check "zero switches the escalation off" "VPN … | color=orange" "$(first_line "$out")"
+check "and raises nothing" "0" "$(notifications)"
+reset_session_state
 
 # A real disconnect must still be called one — the fix above must not have
 # swallowed the case the plugin exists to report.
@@ -663,6 +772,101 @@ VPN_ETA_TEST_STATS="    Connection State:            Disconnected" \
 check "our own teardown stays quiet through a transition" "0" "$(notifications)"
 reset_session_state
 
+# The other half of the qualified-state trap, and the worse one: the client says
+# Connected, and the plugin says off. Cisco spells the last hour of a session
+# `Connected (session expiring soon)`, and drops the Session Disconnect field on
+# some of those replies — so a literal comparison sends the most confident
+# reading there is down the disconnect path, with the drop notification behind
+# it. Measured on a real client with 23 minutes left.
+reset_session_state
+seed_cache 60 10.0.0.2
+out=$(VPN_ETA_TEST_STATS='    Connection State:            Connected (session expiring soon)
+    Client Address (IPv4):       10.0.0.2' VPN_ETA_TEST_PERSIST=1 "$PLUGIN")
+check "a qualified Connected is not a disconnect" "VPN 2h 59m" \
+	"$(printf '%s\n' "$out" | head -1 | sed 's/ |.*//')"
+check "and raises no drop notification" "0" "$(notifications)"
+
+# What the client volunteered is the informative half, so it survives into the
+# menu whole. Comparing the word is not the same as storing it: normalising at
+# the source would have passed every check above and silently thrown the one
+# thing the client went out of its way to say.
+reset_session_state
+out=$(VPN_ETA_TEST_STATS='    Connection State:            Connected (session expiring soon)
+    Session Disconnect:          23 Minutes Remaining
+    Client Address (IPv4):       10.0.0.2' VPN_ETA_TEST_PERSIST=1 "$PLUGIN")
+check "the qualifier still reaches the menu" "1" \
+	"$(printf '%s\n' "$out" | grep -c 'Connection state: Connected (session expiring soon)')"
+reset_session_state
+
+# ---------------------------------------------------------------------------
+# The incident capture. history.log records THAT the tunnel changed state; the
+# client's own log is the only account of why, and macOS evicts that within
+# hours. VPN_ETA_LOG_BIN is the only reason this path can be tested at all on a
+# machine that has never run a VPN — and on CI, where the real reader would
+# happily return its header and nothing else.
+
+FAKE_LOG=$FAKE_DIR/log-reader
+cat >"$FAKE_LOG" <<'FAKE'
+#!/bin/sh
+# Stands in for /usr/bin/log, which prints a header before any rows — and prints
+# it even when it matched nothing, which is the case worth telling apart.
+printf 'Timestamp               Ty Process[PID:TID]\n'
+[ -n "${FAKE_LOG_HEADER_ONLY:-}" ] && exit 0
+printf '2026-01-01 00:00:00 Df vpnagentd[100] gateway 192.0.2.1 is not reachable\n'
+FAKE
+chmod +x "$FAKE_LOG"
+
+incidents() { find "$STATE_DIR/incidents" -name '*.log' 2>/dev/null | wc -l | tr -d ' '; }
+capture() {
+	# $1 is the fixture state; the rest is extra environment.
+	state=$1
+	shift
+	env "$@" VPN_ETA_INCIDENT_LOG=1 VPN_ETA_LOG_BIN="$FAKE_LOG" \
+		VPN_ETA_TEST_STATS="    Connection State:            $state" \
+		VPN_ETA_TEST_PERSIST=1 "$PLUGIN" >/dev/null
+}
+
+# A diagnostic that reads the system log is not something to switch on for
+# somebody, so the default has to be measured rather than assumed.
+reset_session_state
+seed_cache 60
+VPN_ETA_TEST_STATS='    Connection State:            Reconnecting' \
+	VPN_ETA_TEST_PERSIST=1 "$PLUGIN" >/dev/null
+check "the capture stays off until it is asked for" "0" "$(incidents)"
+
+reset_session_state
+seed_cache 60
+capture Reconnecting
+check "a transition saves the client's account beside the history" "1" "$(incidents)"
+check "and saves what the client actually said" "1" \
+	"$(grep -rh 'is not reachable' "$STATE_DIR/incidents" 2>/dev/null | wc -l | tr -d ' ')"
+
+# A session that came up needs no explaining, and capturing one would spend
+# seconds and hundreds of kilobytes saying so.
+reset_session_state
+capture Connected VPN_ETA_TEST_IFCONFIG="$TUNNEL_UP"
+check "a healthy connect explains itself" "0" "$(incidents)"
+
+# The reader prints its header whether or not it matched anything, so a
+# header-only file is the shape of a capture that did not work. Leaving it
+# behind would read as "the client said nothing", which is a different claim.
+reset_session_state
+seed_cache 60
+capture Reconnecting FAKE_LOG_HEADER_ONLY=1
+check "a capture that caught nothing leaves nothing behind" "0" "$(incidents)"
+
+# Bounded by count, not by age: the point is that the directory has a ceiling.
+reset_session_state
+mkdir -p "$STATE_DIR/incidents"
+for stamp in 2026-01-01T000001 2026-01-02T000002 2026-01-03T000003; do
+	printf 'older capture\n' >"$STATE_DIR/incidents/$stamp-transition.log"
+done
+seed_cache 60
+capture Reconnecting VPN_ETA_INCIDENT_KEEP=2
+check "the directory is bounded by count" "2" "$(incidents)"
+check "and it is the oldest that goes" "false" \
+	"$([ -e "$STATE_DIR/incidents/2026-01-01T000001-transition.log" ] && echo true || echo false)"
+reset_session_state
 
 reset_session_state
 run_live "$(stats_for '5 Hours 0 Minutes Remaining')"
