@@ -101,21 +101,25 @@ check "connected without a countdown is not off" "VPN on | color=green" "$(first
 # The regression this pair guards: Cisco intermittently drops Session Disconnect
 # from an otherwise healthy reply, which used to blank the number out for that
 # whole refresh even though a good reading was sitting in the cache.
-seed_cache() {
+# Age in seconds, minutes remaining, client address. Named apart from the
+# seed_cache below, which fixes the countdown at 180 and takes the address
+# second: one name for both is how a 3-arg call silently became a 2-arg one,
+# seeding the address 500.
+seed_cache_minutes() {
 	printf 'epoch=%s\nminutes=%s\naddress=%s\n' "$(($(date +%s) - $1))" "$2" "$3" \
 		>"$STATE_DIR/last-session"
 }
 
-seed_cache 600 180 10.3.3.3
+seed_cache_minutes 600 180 10.3.3.3
 out=$(VPN_ETA_TEST_STATS=$CONNECTED_NO_COUNTDOWN "$PLUGIN")
 check "a dropped countdown is extrapolated" "VPN 2h 50m | color=green" "$(first_line "$out")"
 
 # A different address is a different session, so its deadline says nothing.
-seed_cache 600 180 10.0.0.1
+seed_cache_minutes 600 180 10.0.0.1
 out=$(VPN_ETA_TEST_STATS=$CONNECTED_NO_COUNTDOWN "$PLUGIN")
 check "a cache from another session is not extrapolated" "VPN on | color=green" "$(first_line "$out")"
 
-seed_cache 7200 180 10.3.3.3
+seed_cache_minutes 7200 180 10.3.3.3
 out=$(VPN_ETA_TEST_STATS=$CONNECTED_NO_COUNTDOWN "$PLUGIN")
 check "a stale cache is not extrapolated" "VPN on | color=green" "$(first_line "$out")"
 rm -f "$STATE_DIR/last-session"
@@ -396,7 +400,7 @@ run_start() {
 		"$PLUGIN" start
 }
 
-seed_cache 60 500 10.9.9.9
+seed_cache 60 10.9.9.9
 out=$(run_start n connected)
 start_rc=$?
 # The prompt has no trailing newline, so the reply lands on the prompt's line.
@@ -407,7 +411,7 @@ check "declining runs no connect" "" "$(grep -c '^connect' "$FAKE_DIR/log" | tr 
 
 # Enter is the answer the prompt already assumes, and the only reason the prompt
 # is still there is that a live session is about to go.
-seed_cache 60 500 10.9.9.9
+seed_cache 60 10.9.9.9
 out=$(run_start "" connected)
 check "an empty answer accepts" \
 	"New VPN session established: 23 Hours 59 Minutes Remaining." \
@@ -420,7 +424,7 @@ check "no session means no prompt at all" "" \
 check "and it starts anyway" "connect gw.example.com" "$(grep '^connect' "$FAKE_DIR/log")"
 
 # An unanswerable prompt is not a yes: EOF must not tear a live session down.
-seed_cache 60 500 10.9.9.9
+seed_cache 60 10.9.9.9
 printf 'connected\n' >"$FAKE_DIR/state"
 : >"$FAKE_DIR/log"
 out=$(env VPN_ETA_VPN_BIN="$FAKE_DIR/vpn" VPN_ETA_CONNECT_ATTEMPTS=2 VPN_ETA_CONNECT_SLEEP=0 \
@@ -437,7 +441,7 @@ check "a fresh start does not disconnect first" "0" "$(grep -c '^disconnect' "$F
 check "a fresh start connects the saved host" "connect gw.example.com" \
 	"$(grep '^connect' "$FAKE_DIR/log")"
 
-seed_cache 60 500 10.9.9.9
+seed_cache 60 10.9.9.9
 out=$(run_start y connected)
 check "an active session is torn down first" "1" "$(grep -c '^disconnect' "$FAKE_DIR/log" | tr -d ' ')"
 check "and replaced by a new one" \
@@ -447,7 +451,7 @@ check "and replaced by a new one" \
 # The regression this guards: a connect that returns without a countdown used to
 # leave the previous session's deadline cached. The address cannot veto it —
 # a gateway may hand the same one back — so the cache has to go at teardown.
-seed_cache 60 500 10.9.9.9
+seed_cache 60 10.9.9.9
 out=$(run_start y connected FAKE_VPN_AFTER_CONNECT=nocountdown)
 start_rc=$?
 check "a connect without a countdown is an error" "1" "$start_rc"
@@ -958,7 +962,7 @@ check "but it is still logged" "disconnected" "$(last_event)"
 # Nothing prints anywhere on this path, so a failure that only printed would be
 # a silent one — and the session it failed to end still has its deadline.
 reset_session_state
-seed_cache 60 500 10.9.9.9
+seed_cache 60 10.9.9.9
 run_disconnect connected FAKE_VPN_DISCONNECT_RC=1 >/dev/null
 disconnect_rc=$?
 check "a refused disconnect is an error" "1" "$disconnect_rc"

@@ -113,10 +113,12 @@ VPN_TIMEOUT_SECONDS=$(number_or "${VPN_ETA_TIMEOUT:-12}" 12)
 
 # `history.log` records THAT the tunnel changed state; the client's own log is
 # the only place that says WHY — which gateway address a reconnect was retrying,
-# whether the network went out from under it. That log is a rolling window, and
-# a much shorter one than it looks: measured on one Mac, the persistent store
-# held about six hours, so a wedge worth understanding over morning coffee is
-# already unreadable. Off by default because it is a diagnostic, not a feature
+# whether the network went out from under it. That log does not keep, and it is
+# the client's own lines that go first: measured on one Mac, a query over one
+# midday window returned hundreds of lines in the evening and a single line by
+# night, while other processes' messages from that identical minute were still
+# there in full. A wedge worth understanding over morning coffee is already
+# unreadable. Off by default because it is a diagnostic, not a feature
 # of the countdown; on, each interesting state change saves the window that led
 # up to it beside the history it explains.
 case ${VPN_ETA_INCIDENT_LOG:-} in
