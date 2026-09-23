@@ -75,8 +75,9 @@ shoot() {
 
 		size = attr(params, "size"); if (size == "") size = 13
 		c = attr(params, "color")
+		action = attr(params, "bash") != "" || attr(params, "href") != "" || attr(params, "refresh") != ""
 		kind[rows] = "row"; text[rows] = line; px[rows] = size
-		fill[rows] = (c in colour) ? colour[c] : "#1d1d1f"
+		fill[rows] = (c in colour) ? colour[c] : (action ? "#1d1d1f" : "#7c7c80")
 		rows++
 	}
 	END {

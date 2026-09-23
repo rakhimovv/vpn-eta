@@ -18,10 +18,9 @@ Both suites green and ShellCheck silent, every time. CI runs exactly those plus 
 SwiftBar or the network: both drive a fake Cisco client inside a `mktemp -d` sandbox. The
 plugin suite takes about fifteen seconds.
 
-⚠ **`tests/install.test.sh` quits and relaunches SwiftBar on the machine that runs it.**
-`install.sh`'s `confirm()` treats "no terminal attached" as yes, so each of the six installer
-runs reaches the restart step. Harmless on a CI runner, disruptive on the user's own Mac —
-warn them first, or stub `osascript` and `open` onto `PATH` for the run.
+`tests/install.test.sh` stubs `osascript` and `open` before running the installer,
+so its restart steps cannot quit the user's SwiftBar. Keep those stubs in place:
+`install.sh`'s `confirm()` treats "no terminal attached" as yes.
 
 **There is no single-test selector** — both suites are linear scripts. To exercise one case,
 drive the plugin through the same seams the suite uses:
@@ -41,6 +40,10 @@ in that half of an action item is invisible to `tests/` and to ShellCheck alike.
 constrain it instead: the sibling plugin `lidguard.10s.sh` in the same plugin folder has used
 that exact form since August, and a hand-click is the only real proof. Click a changed item once
 before trusting it in an incident.
+
+SwiftBar treats an informational row with `color=` as an action even without
+`bash=`, `href=` or `refresh=`. Keep colour on the menu-bar title; omit it from
+actionless dropdown rows so they cannot be selected.
 
 ## Layout
 
@@ -85,11 +88,16 @@ including the common one that leaves through `Reconnecting`.
 
 ## State, and the catch that protects it
 
-Five files under `STATE_DIR`: `last-session` (cached countdown, client address, marks already
+Five core files under `STATE_DIR`: `last-session` (cached countdown, client address, marks already
 notified), `last-event` (the dedupe key that makes a per-minute plugin log one line per
 *change*), `history.log`, `expected-teardown` (a disconnect the plugin itself started must
 not raise an alarm), and `muted-until` (an epoch, so the silence lifts itself rather than
 waiting to be remembered).
+
+Automatic reconnection adds `auto-retry`, `auto-paused` and a retained `auto.lock`.
+It runs only after an explicit Cisco `Disconnected`, under `lockf`, and a failed
+login pauses further attempts. Manual Start and Disconnect also pause it, so an
+SMS fallback or intentional teardown cannot race the next scheduled tick.
 
 Both of those last two are deadlines that suppress a notification, and neither suppresses a
 *log line* — the history is what an unexplained drop is reconstructed from later, and it is
@@ -132,6 +140,8 @@ make a test pass.
 | `VPN_ETA_VPN_BIN` | a fake Cisco binary — the only way to test the start path |
 | `VPN_ETA_NOTIFY_SINK` | collects notifications in a file instead of delivering them |
 | `VPN_ETA_LOG_BIN` | a fake `/usr/bin/log` — the only way to test the incident capture |
+| `VPN_ETA_SECURITY_BIN` | a fake `security` command for automatic-login fixtures |
+| `VPN_ETA_AUTO_CONNECT_BIN` | a fake automatic connector for retry and pause fixtures |
 | `VPN_ETA_CONFIG` | the config file to source (`/dev/null` for documented defaults) |
 
 ## Adding a setting
@@ -147,3 +157,5 @@ Settings reach the plugin only through that file. SwiftBar starts plugins from l
 reads no shell profile, so an exported variable reaches a terminal run and never the menu bar.
 The same limitation is why a second copy of the plugin finds its config by its own filename —
 there is nowhere to set a per-plugin environment variable.
+
+GUIDANCE-EOF: vpn-eta

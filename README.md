@@ -99,6 +99,9 @@ reads no `~/.zshrc`. A variable exported there reaches a terminal run and never 
 | `VPN_ETA_STATE_DIR` | SwiftBar's per-plugin data dir | Where the state file and `history.log` live. |
 | `VPN_ETA_HISTORY_LINES` | `500` | How much history to keep. |
 | `VPN_ETA_VPN_BIN` | autodetected | The Cisco CLI, if it is not at a standard path. |
+| `VPN_ETA_AUTO_CONNECT` | off | Reconnect after Cisco explicitly reports `Disconnected`. |
+| `VPN_ETA_USER` | unset | AD login used by automatic reconnection. |
+| `VPN_ETA_AUTO_RETRY` | `300` | Minimum seconds between automatic login attempts. |
 | `VPN_ETA_TIMEOUT` | `12` | Seconds to wait for one CLI call. |
 | `VPN_ETA_STALE_LIMIT` | `45` | Minutes an extrapolated countdown stays trustworthy. |
 | `VPN_ETA_TRANSITION_LIMIT` | `5` | Minutes one reconnect may run before it counts as stuck rather than settling. `0` never escalates. |
@@ -127,15 +130,54 @@ Which terminal is SwiftBar's setting — Preferences → Advanced → Terminal, 
 The click is the confirmation, so nothing more is asked when the VPN is already down. Only a
 live session about to be torn down gets `Continue? [Y/n]`, where Enter means yes.
 
-**It does not store your VPN password and has nowhere to put one.** A gateway with a second
-factor issues a fresh code every login, so you are at the keyboard regardless. Cisco already
-remembers your username; the password comes from your password manager.
+By default, vpn-eta does not handle your VPN credentials. Cisco asks for them in the terminal.
 
 `⛔ Disconnect` ends the session and appears only while there is one to end. No terminal
 window opens: ending a session asks Cisco for nothing, and the sign-in is what *starting* one
 costs. The teardown is recorded as one you asked for, so it raises no drop alert — the menu
 bar simply goes to `off`. If Cisco refuses, a notification says so, since nothing on that path
 has a window to print to.
+
+### Automatic reconnection
+
+This optional mode starts a new session after Cisco **explicitly reports** `Disconnected`.
+It does not disconnect a live session early, and it does not treat a silent client or a
+`Reconnecting` state as permission to start another login. Attempts are spaced at least
+five minutes apart. If a login fails, automatic connection pauses and sends a notification
+instead of repeatedly trying a potentially bad token. Use `▶ Resume automatic connection`
+in the menu to allow it again. Choosing `⛔ Disconnect` also pauses it.
+The `🔑 Start manually (SMS or TOTP)…` item stays available. It opens Cisco's
+normal sign-in, so SMS remains a fallback if the saved TOTP token or automatic
+login fails. SMS codes still need to be entered by hand. Choosing manual login
+pauses automatic connection until you resume it from the menu.
+
+It uses the PIN and **secret key** of your VPN TOTP token. The secret key is the long value
+you added to KeePassXC, not the six-digit code that changes every 30 seconds. Store the
+PIN and secret key locally in macOS Keychain; the commands below prompt for each value
+without putting it in the command line. Run them yourself and do not paste the values into
+the repo or a message:
+
+```sh
+security add-generic-password -U -a 'your.ad.login' -s vpn-eta-pin -w
+security add-generic-password -U -a 'your.ad.login' -s vpn-eta-totp -w
+```
+
+Then set these lines in `~/.config/vpn-eta/config`, using your own login and existing
+saved profile name:
+
+```sh
+VPN_ETA_HOST='your-saved-profile'
+VPN_ETA_USER='your.ad.login'
+VPN_ETA_AUTO_CONNECT=1
+```
+
+The plugin uses macOS's `security`, `expect` and Perl utilities to read the two Keychain
+items only at Cisco's password prompt, generate a fresh TOTP code, and submit the combined
+PIN and code. Credentials are never written to vpn-eta's config, state files or log.
+KeePassXC does not need to be running for this mode. Anyone who can read those Keychain
+items while your Mac is unlocked can generate the same login response, so enable this
+only if that local access trade-off is acceptable to you. If Cisco changes its login
+prompts, automatic login fails closed; you can still use `🔑 Start new session…`.
 
 ## Notifications and the log
 
@@ -221,6 +263,10 @@ SwiftBar does not choose.
 
 A second copy installed for another gateway is not found automatically. SwiftBar's own
 preferences are left as they were, since other plugins may now depend on them.
+If you enabled automatic reconnection, the two Keychain items were added by you rather
+than the installer and remain after uninstall. Remove them with `security
+delete-generic-password -a 'your.ad.login' -s vpn-eta-pin` and the same command
+with `vpn-eta-totp` as the service name.
 
 ## Development
 

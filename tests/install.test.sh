@@ -147,6 +147,14 @@ HOME=$SANDBOX/data "$REPO/uninstall.sh" --plugin-dir "$SANDBOX/scoped/plugins" \
 check "and removes the state directory it is given" "false" \
 	"$([ -d "$canary" ] && echo true || echo false)"
 
+mkdir -p "$SANDBOX/custom/plugins" "$SANDBOX/custom/state"
+printf "VPN_ETA_STATE_DIR='%s'\n" "$SANDBOX/custom/state" >"$SANDBOX/custom/config"
+printf 'session history\n' >"$SANDBOX/custom/state/history.log"
+"$REPO/uninstall.sh" --plugin-dir "$SANDBOX/custom/plugins" \
+	--config "$SANDBOX/custom/config" --all >/dev/null 2>&1
+check "a configured state directory is removed before its path is forgotten" "false" \
+	"$([ -d "$SANDBOX/custom/state" ] && echo true || echo false)"
+
 # --all means "do not ask me", which matters because these prompts default to no.
 mkdir -p "$SANDBOX/allyes/plugins"
 cp "$REPO/swiftbar/vpn-eta.1m.sh" "$SANDBOX/allyes/plugins/"

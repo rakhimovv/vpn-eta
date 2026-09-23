@@ -25,6 +25,13 @@
 # (/opt/cisco/secureclient/bin/vpn, then /opt/cisco/anyconnect/bin/vpn).
 #VPN_ETA_VPN_BIN="/opt/cisco/secureclient/bin/vpn"
 
+# Reconnect automatically after Cisco explicitly reports Disconnected. Requires
+# the profile, AD login and two Keychain items described in the README. A manual
+# Disconnect pauses this mode until you choose Resume automatic connection.
+#VPN_ETA_AUTO_CONNECT=1
+#VPN_ETA_USER="your.ad.login"
+#VPN_ETA_AUTO_RETRY=300
+
 # ── What the menu bar shows ──────────────────────────────────────────────────
 
 # The word in front of the countdown. Worth changing if you run this plugin

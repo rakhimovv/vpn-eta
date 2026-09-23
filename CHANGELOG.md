@@ -3,6 +3,19 @@
 Notable changes. Dates are release dates; the format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.3.0] — 2026-09-24
+
+### Added
+
+- Optional automatic reconnection after Cisco explicitly reports `Disconnected`.
+  The plugin reads a VPN token PIN and TOTP key from macOS Keychain when Cisco
+  asks for a password, and generates the current code then. Repeated attempts
+  are spaced at least five minutes apart. A failed login or manual Disconnect
+  pauses automatic reconnection until it is resumed from the menu.
+- Informational menu rows no longer behave like clickable actions in SwiftBar.
+- Uninstall now reads a configured state directory before removing the config
+  that names it.
+
 ## [1.2.0] — 2026-09-01
 
 ### Added

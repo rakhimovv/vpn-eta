@@ -3,12 +3,12 @@
 # <xbar.title>VPN session ETA</xbar.title>
 # <xbar.desc>Shows the server-reported time remaining in the VPN session.</xbar.desc>
 # <xbar.author>Ruslan Rakhimov</xbar.author>
-# <xbar.version>v1.2.0</xbar.version>
+# <xbar.version>v1.3.0</xbar.version>
 
 # The plugin is COPIED into SwiftBar's folder, so the installed file has no link
 # back to the tag it came from. Without this a bug report can name the macOS,
 # SwiftBar and Cisco versions and still not say which vpn-eta is running.
-VERSION=1.2.0
+VERSION=1.3.0
 
 export PATH="/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin"
 
@@ -64,6 +64,8 @@ HISTORY_FILE=$STATE_DIR/history.log
 TEARDOWN_FILE=$STATE_DIR/expected-teardown
 MUTE_FILE=$STATE_DIR/muted-until
 INCIDENT_DIR=$STATE_DIR/incidents
+AUTO_RETRY_FILE=$STATE_DIR/auto-retry
+AUTO_PAUSE_FILE=$STATE_DIR/auto-paused
 
 # What the menu bar says in front of the countdown. Two menu-bar items showing
 # "VPN" tell you nothing, so a second gateway can be labelled "Work" or "Lab".
@@ -141,6 +143,11 @@ LOG_BIN=${VPN_ETA_LOG_BIN:-/usr/bin/log}
 # How long to wait for a freshly connected session to report its countdown.
 CONNECT_POLL_ATTEMPTS=$(number_or "${VPN_ETA_CONNECT_ATTEMPTS:-15}" 15)
 CONNECT_POLL_SLEEP=$(number_or "${VPN_ETA_CONNECT_SLEEP:-2}" 2)
+case ${VPN_ETA_AUTO_CONNECT:-} in
+1 | yes | on | true) AUTO_CONNECT=1 ;;
+*) AUTO_CONNECT= ;;
+esac
+AUTO_RETRY_SECONDS=$(number_or "${VPN_ETA_AUTO_RETRY:-300}" 300)
 
 find_vpn() {
 	# Set VPN_ETA_VPN_BIN when the client lives somewhere the two standard paths
@@ -686,11 +693,15 @@ cache_matches_session() {
 # alike: the countdown reread is instant and touches nothing, while starting a
 # session tears the tunnel down and re-authenticates.
 start_button() {
-	echo "🔑  Start new session… | bash=$0 param0=start terminal=true refresh=true"
-	if [ "${1-}" = active ]; then
-		echo "Disconnects the current session first; Cisco sign-in may be required | color=gray size=11"
+	if [ -n "$AUTO_CONNECT" ]; then
+		echo "🔑  Start manually (SMS or TOTP)… | bash=$0 param0=start terminal=true refresh=true"
 	else
-		echo "Connects the saved VPN profile; Cisco sign-in may be required | color=gray size=11"
+		echo "🔑  Start new session… | bash=$0 param0=start terminal=true refresh=true"
+	fi
+	if [ "${1-}" = active ]; then
+		echo "Disconnects the current session first; Cisco sign-in may be required | size=11"
+	else
+		echo "Connects the saved VPN profile; Cisco sign-in may be required | size=11"
 	fi
 }
 
@@ -699,12 +710,12 @@ start_button() {
 # password and the one-time code are what *starting* one costs.
 disconnect_button() {
 	echo "⛔  Disconnect | bash=$0 param0=disconnect terminal=false refresh=true"
-	echo "Ends this session now; no drop alert follows | color=gray size=11"
+	echo "Ends this session now; no drop alert follows | size=11"
 }
 
 refresh_button() {
 	echo "↻  Refresh countdown | refresh=true"
-	echo "Re-reads the client; the VPN session is left alone | color=gray size=11"
+	echo "Re-reads the client; the VPN session is left alone | size=11"
 }
 
 # Muting is visible only while it lasts, and the item that offers it is the same
@@ -713,10 +724,19 @@ refresh_button() {
 mute_button() {
 	if muted_for=$(mute_remaining); then
 		echo "🔔  Resume alerts | bash=$0 param0=unmute terminal=false refresh=true"
-		echo "Muted for another $(mute_span "$muted_for") | color=gray size=11"
+		echo "Muted for another $(mute_span "$muted_for") | size=11"
 	elif [ "$MUTE_MINUTES" -gt 0 ]; then
 		echo "🔕  Mute alerts for $(mute_span "$MUTE_MINUTES") | bash=$0 param0=mute terminal=false refresh=true"
-		echo "Silences the warnings and the drop alert; the countdown runs on | color=gray size=11"
+		echo "Silences the warnings and the drop alert; the countdown runs on | size=11"
+	fi
+}
+
+auto_button() {
+	[ -n "$AUTO_CONNECT" ] || return 0
+	if [ -e "$AUTO_PAUSE_FILE" ]; then
+		echo "▶  Resume automatic connection | bash=$0 param0=resume-auto terminal=false refresh=true"
+	else
+		echo "⏸  Pause automatic connection | bash=$0 param0=pause-auto terminal=false refresh=true"
 	fi
 }
 
@@ -749,11 +769,12 @@ history_line() {
 # Disconnect is offered only against a session there is something to end.
 menu_actions() {
 	if [ -n "$CONFIG_ERROR" ]; then
-		echo "⚠️  Settings ignored: ${CONFIG_ERROR} has a syntax error | color=red size=12"
+		echo "⚠️  Settings ignored: ${CONFIG_ERROR} has a syntax error | size=12"
 	fi
 	history_line
 	refresh_button
 	mute_button
+	auto_button
 	echo "---"
 	start_button "$1"
 	if [ "${1-}" = active ]; then
@@ -842,6 +863,10 @@ start_new_session() {
 		esac
 	fi
 
+	if [ -n "$AUTO_CONNECT" ]; then
+		mkdir -p "$STATE_DIR" 2>/dev/null && : >"$AUTO_PAUSE_FILE"
+	fi
+
 	# The drop that follows is this plugin's doing, so it must not surface as a
 	# notification the way an unexpected one does.
 	mark_expected_teardown
@@ -885,6 +910,81 @@ start_new_session() {
 	echo "New VPN session established: ${new_remaining}."
 }
 
+# Cisco asks for credentials only after contacting the gateway. Generate TOTP
+# at that prompt so a slow connection cannot consume most of its 30-second life.
+# Keychain items are read only in this opt-in path; neither value enters argv,
+# a file, the SwiftBar output, or the connection history.
+auto_login() {
+	VPN_ETA_AUTO_VPN=$VPN VPN_ETA_AUTO_HOST=$VPN_ETA_HOST \
+		VPN_ETA_AUTO_USER=$VPN_ETA_USER \
+		VPN_ETA_AUTO_SECURITY=${VPN_ETA_SECURITY_BIN:-/usr/bin/security} \
+		/usr/bin/expect <<'EXPECT'
+log_user 0
+set timeout 45
+set answered 0
+spawn -noecho $env(VPN_ETA_AUTO_VPN) connect $env(VPN_ETA_AUTO_HOST)
+expect {
+	-re {[Uu]sername[ \t]*:} {
+		send -- "$env(VPN_ETA_AUTO_USER)\r"
+		exp_continue
+	}
+	-re {[Pp]assword[ \t]*:} {
+		if {$answered} { exit 1 }
+		set answered 1
+		if {[catch {exec $env(VPN_ETA_AUTO_SECURITY) find-generic-password -a $env(VPN_ETA_AUTO_USER) -s vpn-eta-pin -w} pin]} { exit 1 }
+		if {[catch {exec $env(VPN_ETA_AUTO_SECURITY) find-generic-password -a $env(VPN_ETA_AUTO_USER) -s vpn-eta-totp -w} seed]} { exit 1 }
+		if {[catch {exec /usr/bin/perl -MDigest::SHA=hmac_sha1 -e {
+			my $seed = <STDIN>;
+			$seed = uc($seed);
+			$seed =~ s/[\s=]//g;
+			die "invalid TOTP key" unless $seed =~ /^[A-Z2-7]+$/;
+			my $alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+			my $bits = join "", map { sprintf "%05b", index($alphabet, $_) } split //, $seed;
+			my $key = pack("B*", substr($bits, 0, int(length($bits) / 8) * 8));
+			my $digest = hmac_sha1(pack("Q>", int(time / 30)), $key);
+			my $offset = ord(substr($digest, -1)) & 15;
+			printf "%06d", (unpack("N", substr($digest, $offset, 4)) & 0x7fffffff) % 1000000;
+		} << $seed} code]} { exit 1 }
+		send -- "${pin}${code}\r"
+		exp_continue
+	}
+	-re {[Ss]tate:[ \t]*[Cc]onnected} { exit 0 }
+	-re {([Aa]uthentication failed|[Ll]ogin failed|[Ss]tate:[ \t]*[Dd]isconnected)} { exit 1 }
+	eof { exit 1 }
+	timeout { exit 1 }
+}
+EXPECT
+}
+
+auto_connect_session() {
+	[ -n "$AUTO_CONNECT" ] && [ ! -e "$AUTO_PAUSE_FILE" ] || return 0
+	[ -n "${VPN_ETA_HOST:-}" ] && [ -n "${VPN_ETA_USER:-}" ] || return 1
+	may_write_state || return 0
+	mkdir -p "$STATE_DIR" 2>/dev/null || return 1
+	now=$(now_epoch)
+	last=$(cat "$AUTO_RETRY_FILE" 2>/dev/null)
+	case $last in '' | *[!0-9]*) last=0 ;; esac
+	[ $((now - last)) -ge "$AUTO_RETRY_SECONDS" ] || return 0
+	if ! find_vpn; then return 1; fi
+	# The scheduled render may have seen Disconnected just as another client
+	# started connecting. Recheck under the lock before opening a new session.
+	if [ "${VPN_ETA_TEST_STATS+x}" != x ]; then
+		read_stats || return 1
+		[ "$(state_word "$(connection_state "$stats")")" = Disconnected ] || return 0
+	fi
+	printf '%s\n' "$now" >"$AUTO_RETRY_FILE" || return 1
+	[ ! -e "$AUTO_PAUSE_FILE" ] || return 0
+	if [ -n "${VPN_ETA_AUTO_CONNECT_BIN:-}" ]; then
+		"$VPN_ETA_AUTO_CONNECT_BIN" "$VPN_ETA_HOST" "$VPN_ETA_USER" >/dev/null 2>&1 && return 0
+	else
+		auto_login >/dev/null 2>&1 && return 0
+	fi
+	: >"$AUTO_PAUSE_FILE"
+	notify "VPN automatic login paused" \
+		"Cisco did not establish a session. Use manual SMS or TOTP login, then resume automatic connection."
+	return 1
+}
+
 # Ending the session on purpose. Unlike the start path this one runs with no
 # terminal attached, so nothing it prints is seen: a failure has to arrive as a
 # notification or not at all.
@@ -904,6 +1004,9 @@ disconnect_session() {
 			"Cisco could not end the session. Check Cisco Secure Client."
 		echo "Cisco could not disconnect the current session."
 		return 1
+	fi
+	if [ -n "$AUTO_CONNECT" ]; then
+		mkdir -p "$STATE_DIR" 2>/dev/null && : >"$AUTO_PAUSE_FILE"
 	fi
 	# Only now: a failed disconnect leaves the session running, and with it the
 	# deadline that the next unreadable reply will want to extrapolate from.
@@ -929,15 +1032,15 @@ render_unreadable() {
 		echo "${BAR_PREFIX}$(format_menubar "$cached_minutes") | color=$(color_for_minutes "$cached_minutes")"
 		echo "---"
 		echo "🔐  about ${short} remaining | size=14"
-		echo "Tunnel is still up; countdown estimated | color=gray size=12"
-		echo "${detail}, last confirmed ${cached_age_minutes}m ago | color=gray size=12"
+		echo "Tunnel is still up; countdown estimated | size=12"
+		echo "${detail}, last confirmed ${cached_age_minutes}m ago | size=12"
 	elif any_tunnel_up; then
 		record_event unreadable "" "tunnel=up client=silent"
 		echo "${BAR_PREFIX}? | color=orange"
 		echo "---"
-		echo "A tunnel is up but the session could not be read | color=orange size=12"
-		echo "${detail} | color=gray size=12"
-		echo "Open Cisco Secure Client to check | color=gray size=12"
+		echo "A tunnel is up but the session could not be read | size=12"
+		echo "${detail} | size=12"
+		echo "Open Cisco Secure Client to check | size=12"
 	else
 		# No tunnel and no readable reply is the strongest evidence this render
 		# has that a session ended, so it is the one that may announce a drop.
@@ -946,8 +1049,8 @@ render_unreadable() {
 		fi
 		echo "${BAR_PREFIX}off | color=gray"
 		echo "---"
-		echo "No tunnel interface and no readable session | color=gray size=12"
-		echo "${detail} | color=gray size=12"
+		echo "No tunnel interface and no readable session | size=12"
+		echo "${detail} | size=12"
 	fi
 	echo "---"
 	menu_actions "$session"
@@ -1011,6 +1114,29 @@ if [ "${1-}" = unmute ]; then
 	exit 0
 fi
 
+if [ "${1-}" = pause-auto ]; then
+	if [ -n "$AUTO_CONNECT" ] && may_write_state; then
+		mkdir -p "$STATE_DIR" 2>/dev/null && : >"$AUTO_PAUSE_FILE"
+	fi
+	refresh_menu_bar
+	exit 0
+fi
+
+if [ "${1-}" = resume-auto ]; then
+	if [ -n "$AUTO_CONNECT" ] && may_write_state; then
+		rm -f "$AUTO_PAUSE_FILE" "$AUTO_RETRY_FILE"
+	fi
+	refresh_menu_bar
+	exit 0
+fi
+
+if [ "${1-}" = auto-connect ]; then
+	auto_connect_session
+	auto_rc=$?
+	[ "$auto_rc" -eq 0 ] && refresh_menu_bar
+	exit "$auto_rc"
+fi
+
 if [ "${VPN_ETA_TEST_STATS+x}" = x ]; then
 	stats=$VPN_ETA_TEST_STATS
 	stats_rc=${VPN_ETA_TEST_RC:-0}
@@ -1022,7 +1148,7 @@ else
 	if ! find_vpn; then
 		echo "${BAR_PREFIX}? | color=red"
 		echo "---"
-		echo "Cisco Secure Client not found | color=red"
+		echo "Cisco Secure Client not found"
 		exit 0
 	fi
 
@@ -1111,21 +1237,21 @@ if [ -z "$remaining" ]; then
 			echo "${BAR_PREFIX}$(format_menubar "$cached_minutes")… | color=$bar_color"
 			echo "---"
 			echo "🔐  about ${short} remaining | size=14"
-			echo "${state}… | color=orange size=12"
+			echo "${state}… | size=12"
 			if [ -n "$stuck" ]; then
-				echo "${state} for ${transition_minutes}m — the tunnel may be stuck | color=red size=12"
+				echo "${state} for ${transition_minutes}m — the tunnel may be stuck | size=12"
 			else
-				echo "Deadline carried from a reading ${cached_age_minutes}m ago | color=gray size=12"
+				echo "Deadline carried from a reading ${cached_age_minutes}m ago | size=12"
 			fi
 		else
 			if [ -n "$stuck" ]; then bar_color=red; else bar_color=orange; fi
 			echo "${BAR_PREFIX}… | color=$bar_color"
 			echo "---"
-			echo "🔐  ${state}… | color=orange size=14"
+			echo "🔐  ${state}… | size=14"
 			if [ -n "$stuck" ]; then
-				echo "${state} for ${transition_minutes}m — the tunnel may be stuck | color=red size=12"
+				echo "${state} for ${transition_minutes}m — the tunnel may be stuck | size=12"
 			else
-				echo "No countdown yet for this session | color=gray size=12"
+				echo "No countdown yet for this session | size=12"
 			fi
 		fi
 		echo "---"
@@ -1143,9 +1269,14 @@ if [ -z "$remaining" ] && [ "$bare_state" != Connected ]; then
 		announce_drop "${cached_minutes:-}"
 	fi
 	clear_state
+	if [ "$bare_state" = Disconnected ] && [ -n "$AUTO_CONNECT" ] &&
+		[ ! -e "$AUTO_PAUSE_FILE" ] && may_write_state; then
+		mkdir -p "$STATE_DIR" 2>/dev/null &&
+			/usr/bin/lockf -t 0 -k "$STATE_DIR/auto.lock" "$0" auto-connect >/dev/null 2>&1 || :
+	fi
 	echo "${BAR_PREFIX}off | color=gray"
 	echo "---"
-	echo "${state:-Disconnected} | color=gray"
+	echo "${state:-Disconnected}"
 	echo "---"
 	menu_actions disconnected
 	exit 0
@@ -1176,16 +1307,16 @@ if [ -z "$remaining" ]; then
 		echo "${BAR_PREFIX}$(format_menubar "$cached_minutes") | color=$(color_for_minutes "$cached_minutes")"
 		echo "---"
 		echo "🔐  about ${short} remaining | size=14"
-		echo "Estimated from a reading ${cached_age_minutes}m ago | color=gray size=12"
-		echo "${reported:-Connected, but the client sent no session countdown} | color=gray size=12"
+		echo "Estimated from a reading ${cached_age_minutes}m ago | size=12"
+		echo "${reported:-Connected, but the client sent no session countdown} | size=12"
 	else
 		echo "${BAR_PREFIX}on | color=green"
 		echo "---"
-		echo "🔐  Connected | color=green size=14"
+		echo "🔐  Connected | size=14"
 		if [ -n "$reported" ]; then
-			echo "Session Disconnect: ${reported} | color=gray size=12"
+			echo "Session Disconnect: ${reported} | size=12"
 		else
-			echo "No session countdown reported | color=gray size=12"
+			echo "No session countdown reported | size=12"
 		fi
 	fi
 	echo "---"
@@ -1210,15 +1341,15 @@ fi
 
 echo "${BAR_PREFIX}$(format_menubar "$total_minutes") | color=$color"
 echo "---"
-echo "🔐  ${short} remaining | color=$color size=14"
-echo "Session limit set by the gateway | color=gray size=12"
-echo "Cisco Secure Client: ${remaining} | color=gray size=12"
+echo "🔐  ${short} remaining | size=14"
+echo "Session limit set by the gateway | size=12"
+echo "Cisco Secure Client: ${remaining} | size=12"
 # The whole field on purpose, where the branches above compare the word: a bare
 # `Connected` is the unremarkable case and says nothing worth a line, while
 # `Connected (session expiring soon)` is the client volunteering something the
 # countdown alone does not say.
 if [ -n "$state" ] && [ "$state" != Connected ]; then
-	echo "Connection state: ${state} | color=orange size=12"
+	echo "Connection state: ${state} | size=12"
 fi
 echo "---"
 menu_actions active

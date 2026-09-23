@@ -227,7 +227,7 @@ check "an empty reply says so rather than quoting nothing" "true" \
 # words, because half a word is not a shorter sentence.
 long=$(awk 'BEGIN { for (i = 0; i < 40; i++) printf "widget " }')
 out=$(VPN_ETA_TEST_STATS=">> error: $long" "$PLUGIN")
-said=$(printf '%s\n' "$out" | sed -n 's/.*said: \(.*\) | color.*/\1/p')
+said=$(printf '%s\n' "$out" | sed -n 's/.*said: \(.*\) | size=.*/\1/p')
 check "a runaway line is shortened" "true" \
 	"$([ "${#said}" -le 101 ] && echo true || echo false)"
 check "and it is cut between words" "true" \
@@ -239,7 +239,7 @@ check "and it is cut between words" "true" \
 # words are all there is.
 tok=$(awk 'BEGIN { for (i = 0; i < 300; i++) printf "x" }')
 out=$(VPN_ETA_TEST_STATS=">> error: $tok" "$PLUGIN")
-said=$(printf '%s\n' "$out" | sed -n 's/.*said: \(.*\) | color.*/\1/p')
+said=$(printf '%s\n' "$out" | sed -n 's/.*said: \(.*\) | size=.*/\1/p')
 check "an over-long word is clipped, not dropped" "true" \
 	"$([ "${#said}" -ge 80 ] && [ "${#said}" -le 101 ] && echo true || echo false)"
 
@@ -1061,6 +1061,119 @@ check "a state path with spaces is encoded" "true" \
 href=${log_line#*href=}
 href=${href%% *}
 check "the href reaches the end of the path" "history.log" "${href##*/}"
+
+# Automatic login uses synthetic Keychain values and a prompt-driven fake
+# client. Neither credential is written to the fixture log.
+AUTO_DIR=$STATE_DIR/auto
+mkdir -p "$AUTO_DIR"
+cat >"$AUTO_DIR/security" <<'FAKE'
+#!/bin/bash
+case $* in
+*vpn-eta-pin*) printf '12345\n' ;;
+*vpn-eta-totp*) printf 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ\n' ;;
+*) exit 1 ;;
+esac
+FAKE
+cat >"$AUTO_DIR/vpn" <<'FAKE'
+#!/bin/bash
+case $1 in
+stats) printf '    Connection State:            Disconnected\n' ;;
+connect)
+	printf 'Username: '
+	IFS= read -r user
+	printf 'Password: '
+	IFS= read -r pass
+	if [[ $user = demo && $pass =~ ^12345[0-9]{6}$ ]]; then
+		printf 'success\n' >"$AUTO_DIR/result"
+		printf '>> state: Connected\n'
+	else
+		printf 'failure\n' >"$AUTO_DIR/result"
+		exit 2
+	fi
+	;;
+esac
+FAKE
+chmod +x "$AUTO_DIR/security" "$AUTO_DIR/vpn"
+export AUTO_DIR
+auto_env=(VPN_ETA_AUTO_CONNECT=1 VPN_ETA_HOST=example.invalid VPN_ETA_USER=demo
+	VPN_ETA_VPN_BIN="$AUTO_DIR/vpn" VPN_ETA_SECURITY_BIN="$AUTO_DIR/security"
+	VPN_ETA_STATE_DIR="$AUTO_DIR/state" VPN_ETA_TEST_PERSIST=1)
+env "${auto_env[@]}" VPN_ETA_TEST_STATS="$DISCONNECTED" "$PLUGIN" auto-connect >/dev/null
+check "automatic login answers Cisco from Keychain" "success" "$(cat "$AUTO_DIR/result" 2>/dev/null)"
+check "automatic login keeps credentials out of state" "0" \
+	"$(grep -E -R -l '12345|GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ' "$AUTO_DIR/state" 2>/dev/null | wc -l | tr -d ' ')"
+
+# A confirmed disconnect may launch; a transition and an unreadable reply may
+# not. Pause wins even over a confirmed disconnect.
+cat >"$AUTO_DIR/connect" <<'FAKE'
+#!/bin/bash
+printf 'attempt\n' >>"$AUTO_DIR/attempts"
+FAKE
+chmod +x "$AUTO_DIR/connect"
+: >"$AUTO_DIR/attempts"
+rm -f "$AUTO_DIR/state/auto-retry"
+env "${auto_env[@]}" VPN_ETA_AUTO_CONNECT_BIN="$AUTO_DIR/connect" \
+	VPN_ETA_TEST_STATS="$DISCONNECTED" "$PLUGIN" >/dev/null
+check "confirmed disconnect triggers automatic login" "1" "$(wc -l <"$AUTO_DIR/attempts" | tr -d ' ')"
+env "${auto_env[@]}" VPN_ETA_AUTO_CONNECT_BIN="$AUTO_DIR/connect" \
+	VPN_ETA_TEST_STATS="$DISCONNECTED" "$PLUGIN" >/dev/null
+check "retry delay prevents a login loop" "1" "$(wc -l <"$AUTO_DIR/attempts" | tr -d ' ')"
+env "${auto_env[@]}" VPN_ETA_AUTO_CONNECT_BIN="$AUTO_DIR/connect" \
+	VPN_ETA_TEST_STATS='    Connection State:            Reconnecting' "$PLUGIN" >/dev/null
+check "reconnecting does not start another login" "1" "$(wc -l <"$AUTO_DIR/attempts" | tr -d ' ')"
+env "${auto_env[@]}" VPN_ETA_AUTO_CONNECT_BIN="$AUTO_DIR/connect" \
+	VPN_ETA_TEST_STATS="$NOT_ATTACHED" "$PLUGIN" >/dev/null
+check "an unreadable reply does not start another login" "1" "$(wc -l <"$AUTO_DIR/attempts" | tr -d ' ')"
+env "${auto_env[@]}" "$PLUGIN" pause-auto >/dev/null
+rm -f "$AUTO_DIR/state/auto-retry"
+env "${auto_env[@]}" VPN_ETA_AUTO_CONNECT_BIN="$AUTO_DIR/connect" \
+	VPN_ETA_TEST_STATS="$DISCONNECTED" "$PLUGIN" >/dev/null
+check "pause blocks automatic login" "1" "$(wc -l <"$AUTO_DIR/attempts" | tr -d ' ')"
+env "${auto_env[@]}" "$PLUGIN" resume-auto >/dev/null
+env "${auto_env[@]}" VPN_ETA_AUTO_CONNECT_BIN="$AUTO_DIR/connect" \
+	VPN_ETA_TEST_STATS="$DISCONNECTED" "$PLUGIN" >/dev/null
+check "resume allows automatic login" "2" "$(wc -l <"$AUTO_DIR/attempts" | tr -d ' ')"
+out=$(env "${auto_env[@]}" VPN_ETA_TEST_STATS="$DISCONNECTED" "$PLUGIN")
+check "automatic mode offers a pause control" "1" \
+	"$(printf '%s\n' "$out" | grep -c 'param0=pause-auto')"
+printf 'connected\n' >"$FAKE_DIR/state"
+env VPN_ETA_CONFIG=/dev/null VPN_ETA_AUTO_CONNECT=1 VPN_ETA_STATE_DIR="$AUTO_DIR/state" \
+	VPN_ETA_VPN_BIN="$FAKE_DIR/vpn" "$PLUGIN" disconnect >/dev/null
+check "manual disconnect pauses automatic connection" "true" \
+	"$([ -e "$AUTO_DIR/state/auto-paused" ] && echo true || echo false)"
+out=$(env "${auto_env[@]}" VPN_ETA_TEST_STATS="$DISCONNECTED" "$PLUGIN")
+check "paused mode offers a resume control" "1" \
+	"$(printf '%s\n' "$out" | grep -c 'param0=resume-auto')"
+check "manual SMS or TOTP fallback remains available" "1" \
+	"$(printf '%s\n' "$out" | grep -c 'Start manually (SMS or TOTP)')"
+printf 'disconnected\n' >"$FAKE_DIR/state"
+env VPN_ETA_CONFIG=/dev/null VPN_ETA_AUTO_CONNECT=1 VPN_ETA_STATE_DIR="$AUTO_DIR/state" \
+	VPN_ETA_VPN_BIN="$FAKE_DIR/vpn" VPN_ETA_HOST=gw.example.com \
+	VPN_ETA_CONNECT_ATTEMPTS=1 VPN_ETA_CONNECT_SLEEP=0 "$PLUGIN" start >/dev/null
+check "manual fallback leaves automatic connection paused" "true" \
+	"$([ -e "$AUTO_DIR/state/auto-paused" ] && echo true || echo false)"
+cat >"$AUTO_DIR/fail-connect" <<'FAKE'
+#!/bin/bash
+exit 1
+FAKE
+chmod +x "$AUTO_DIR/fail-connect"
+env "${auto_env[@]}" "$PLUGIN" resume-auto >/dev/null
+env "${auto_env[@]}" VPN_ETA_AUTO_CONNECT_BIN="$AUTO_DIR/fail-connect" \
+	VPN_ETA_TEST_STATS="$DISCONNECTED" "$PLUGIN" >/dev/null
+check "a failed automatic login pauses retries" "true" \
+	"$([ -e "$AUTO_DIR/state/auto-paused" ] && echo true || echo false)"
+
+# SwiftBar treats an actionless coloured row as selectable. Only the first
+# menu-bar line and rows with an actual action may carry color=.
+for info_stats in "$CONNECTED" "$DISCONNECTED" "$NOT_ATTACHED" '    Connection State:            Reconnecting'; do
+	info_out=$(VPN_ETA_TEST_STATS=$info_stats "$PLUGIN")
+	selectable_info=$(printf '%s\n' "$info_out" | awk '
+		NR == 1 { next }
+		/\|/ && /color=/ && !/bash=/ && !/href=/ && !/refresh=/ { count++ }
+		END { print count + 0 }
+	')
+	check "information rows have no action ($info_stats)" "0" "$selectable_info"
+done
 
 echo "${pass} passed, ${fail} failed"
 [ "$fail" -eq 0 ]
