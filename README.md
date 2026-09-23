@@ -102,6 +102,8 @@ reads no `~/.zshrc`. A variable exported there reaches a terminal run and never 
 | `VPN_ETA_AUTO_CONNECT` | off | Reconnect after Cisco explicitly reports `Disconnected`. |
 | `VPN_ETA_USER` | unset | AD login used by automatic reconnection. |
 | `VPN_ETA_AUTO_RETRY` | `300` | Minimum seconds between automatic login attempts. |
+| `VPN_ETA_KEYCHAIN_SERVICE` | `vpn-eta` | Keychain item prefix; use a different value for a second VPN token. |
+| `VPN_ETA_KEYCHAIN_TIMEOUT` | `10` | Seconds allowed for each Keychain read during automatic login. |
 | `VPN_ETA_TIMEOUT` | `12` | Seconds to wait for one CLI call. |
 | `VPN_ETA_STALE_LIMIT` | `45` | Minutes an extrapolated countdown stays trustworthy. |
 | `VPN_ETA_TRANSITION_LIMIT` | `5` | Minutes one reconnect may run before it counts as stuck rather than settling. `0` never escalates. |
@@ -171,13 +173,18 @@ VPN_ETA_USER='your.ad.login'
 VPN_ETA_AUTO_CONNECT=1
 ```
 
+For a second gateway with a different token, set `VPN_ETA_KEYCHAIN_SERVICE` in that
+plugin's config and store its items under `<value>-pin` and `<value>-totp`.
+
 The plugin uses macOS's `security`, `expect` and Perl utilities to read the two Keychain
 items only at Cisco's password prompt, generate a fresh TOTP code, and submit the combined
 PIN and code. Credentials are never written to vpn-eta's config, state files or log.
 KeePassXC does not need to be running for this mode. Anyone who can read those Keychain
 items while your Mac is unlocked can generate the same login response, so enable this
 only if that local access trade-off is acceptable to you. If Cisco changes its login
-prompts, automatic login fails closed; you can still use `🔑 Start new session…`.
+prompts, automatic login fails closed; you can still use `🔑 Start manually (SMS or TOTP)…`.
+The automatic path has been tested against a simulated Cisco prompt, not a live
+gateway. Verify one real reconnection before relying on it for unattended work.
 
 ## Notifications and the log
 
@@ -266,7 +273,8 @@ preferences are left as they were, since other plugins may now depend on them.
 If you enabled automatic reconnection, the two Keychain items were added by you rather
 than the installer and remain after uninstall. Remove them with `security
 delete-generic-password -a 'your.ad.login' -s vpn-eta-pin` and the same command
-with `vpn-eta-totp` as the service name.
+with `vpn-eta-totp` as the service name. If you changed
+`VPN_ETA_KEYCHAIN_SERVICE`, use that prefix in both commands.
 
 ## Development
 

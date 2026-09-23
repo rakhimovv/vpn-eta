@@ -31,6 +31,8 @@
 #VPN_ETA_AUTO_CONNECT=1
 #VPN_ETA_USER="your.ad.login"
 #VPN_ETA_AUTO_RETRY=300
+#VPN_ETA_KEYCHAIN_SERVICE="vpn-eta"
+#VPN_ETA_KEYCHAIN_TIMEOUT=10
 
 # ── What the menu bar shows ──────────────────────────────────────────────────
 

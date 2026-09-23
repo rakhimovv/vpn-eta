@@ -1102,6 +1102,34 @@ env "${auto_env[@]}" VPN_ETA_TEST_STATS="$DISCONNECTED" "$PLUGIN" auto-connect >
 check "automatic login answers Cisco from Keychain" "success" "$(cat "$AUTO_DIR/result" 2>/dev/null)"
 check "automatic login keeps credentials out of state" "0" \
 	"$(grep -E -R -l '12345|GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ' "$AUTO_DIR/state" 2>/dev/null | wc -l | tr -d ' ')"
+cat >"$AUTO_DIR/security-lab" <<'FAKE'
+#!/bin/bash
+case $* in
+*lab-pin*) printf '12345\n' ;;
+*lab-totp*) printf 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ\n' ;;
+*) exit 1 ;;
+esac
+FAKE
+chmod +x "$AUTO_DIR/security-lab"
+printf 'pending\n' >"$AUTO_DIR/result"
+env "${auto_env[@]}" VPN_ETA_STATE_DIR="$AUTO_DIR/lab-state" \
+	VPN_ETA_SECURITY_BIN="$AUTO_DIR/security-lab" VPN_ETA_KEYCHAIN_SERVICE=lab \
+	VPN_ETA_TEST_STATS="$DISCONNECTED" "$PLUGIN" auto-connect >/dev/null
+check "a second VPN selects its own Keychain items" "success" "$(cat "$AUTO_DIR/result")"
+cat >"$AUTO_DIR/security-slow" <<'FAKE'
+#!/bin/bash
+sleep 3
+case $* in
+*vpn-eta-pin*) printf '12345\n' ;;
+*vpn-eta-totp*) printf 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ\n' ;;
+esac
+FAKE
+chmod +x "$AUTO_DIR/security-slow"
+env "${auto_env[@]}" VPN_ETA_STATE_DIR="$AUTO_DIR/slow-state" \
+	VPN_ETA_SECURITY_BIN="$AUTO_DIR/security-slow" VPN_ETA_KEYCHAIN_TIMEOUT=1 \
+	VPN_ETA_TEST_STATS="$DISCONNECTED" "$PLUGIN" auto-connect >/dev/null
+check "a stalled Keychain read pauses automatic login" "true" \
+	"$([ -e "$AUTO_DIR/slow-state/auto-paused" ] && echo true || echo false)"
 
 # A confirmed disconnect may launch; a transition and an unreadable reply may
 # not. Pause wins even over a confirmed disconnect.
@@ -1162,6 +1190,12 @@ env "${auto_env[@]}" VPN_ETA_AUTO_CONNECT_BIN="$AUTO_DIR/fail-connect" \
 	VPN_ETA_TEST_STATS="$DISCONNECTED" "$PLUGIN" >/dev/null
 check "a failed automatic login pauses retries" "true" \
 	"$([ -e "$AUTO_DIR/state/auto-paused" ] && echo true || echo false)"
+out=$(env "${auto_env[@]}" VPN_ETA_HOST= VPN_ETA_STATE_DIR="$AUTO_DIR/incomplete-state" \
+	VPN_ETA_TEST_STATS="$DISCONNECTED" "$PLUGIN")
+check "missing automatic-login settings are shown in the menu" "1" \
+	"$(printf '%s\n' "$out" | grep -c 'needs VPN_ETA_HOST and VPN_ETA_USER')"
+check "missing automatic-login settings pause attempts" "true" \
+	"$([ -e "$AUTO_DIR/incomplete-state/auto-paused" ] && echo true || echo false)"
 
 # SwiftBar treats an actionless coloured row as selectable. Only the first
 # menu-bar line and rows with an actual action may carry color=.

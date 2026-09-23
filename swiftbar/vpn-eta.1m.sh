@@ -148,6 +148,9 @@ case ${VPN_ETA_AUTO_CONNECT:-} in
 *) AUTO_CONNECT= ;;
 esac
 AUTO_RETRY_SECONDS=$(number_or "${VPN_ETA_AUTO_RETRY:-300}" 300)
+KEYCHAIN_SERVICE=${VPN_ETA_KEYCHAIN_SERVICE:-vpn-eta}
+KEYCHAIN_TIMEOUT=$(number_or "${VPN_ETA_KEYCHAIN_TIMEOUT:-10}" 10)
+[ "$KEYCHAIN_TIMEOUT" -gt 0 ] || KEYCHAIN_TIMEOUT=10
 
 find_vpn() {
 	# Set VPN_ETA_VPN_BIN when the client lives somewhere the two standard paths
@@ -733,6 +736,9 @@ mute_button() {
 
 auto_button() {
 	[ -n "$AUTO_CONNECT" ] || return 0
+	if [ -z "${VPN_ETA_HOST:-}" ] || [ -z "${VPN_ETA_USER:-}" ]; then
+		echo "Automatic connection needs VPN_ETA_HOST and VPN_ETA_USER | size=11"
+	fi
 	if [ -e "$AUTO_PAUSE_FILE" ]; then
 		echo "▶  Resume automatic connection | bash=$0 param0=resume-auto terminal=false refresh=true"
 	else
@@ -917,6 +923,8 @@ start_new_session() {
 auto_login() {
 	VPN_ETA_AUTO_VPN=$VPN VPN_ETA_AUTO_HOST=$VPN_ETA_HOST \
 		VPN_ETA_AUTO_USER=$VPN_ETA_USER \
+		VPN_ETA_AUTO_KEYCHAIN=$KEYCHAIN_SERVICE \
+		VPN_ETA_AUTO_KEYCHAIN_TIMEOUT=$KEYCHAIN_TIMEOUT \
 		VPN_ETA_AUTO_SECURITY=${VPN_ETA_SECURITY_BIN:-/usr/bin/security} \
 		/usr/bin/expect <<'EXPECT'
 log_user 0
@@ -926,13 +934,13 @@ spawn -noecho $env(VPN_ETA_AUTO_VPN) connect $env(VPN_ETA_AUTO_HOST)
 expect {
 	-re {[Uu]sername[ \t]*:} {
 		send -- "$env(VPN_ETA_AUTO_USER)\r"
-		exp_continue
+		exp_continue -continue_timer
 	}
 	-re {[Pp]assword[ \t]*:} {
 		if {$answered} { exit 1 }
 		set answered 1
-		if {[catch {exec $env(VPN_ETA_AUTO_SECURITY) find-generic-password -a $env(VPN_ETA_AUTO_USER) -s vpn-eta-pin -w} pin]} { exit 1 }
-		if {[catch {exec $env(VPN_ETA_AUTO_SECURITY) find-generic-password -a $env(VPN_ETA_AUTO_USER) -s vpn-eta-totp -w} seed]} { exit 1 }
+		if {[catch {exec /usr/bin/perl -e {alarm shift @ARGV; exec @ARGV} $env(VPN_ETA_AUTO_KEYCHAIN_TIMEOUT) $env(VPN_ETA_AUTO_SECURITY) find-generic-password -a $env(VPN_ETA_AUTO_USER) -s "$env(VPN_ETA_AUTO_KEYCHAIN)-pin" -w} pin]} { exit 1 }
+		if {[catch {exec /usr/bin/perl -e {alarm shift @ARGV; exec @ARGV} $env(VPN_ETA_AUTO_KEYCHAIN_TIMEOUT) $env(VPN_ETA_AUTO_SECURITY) find-generic-password -a $env(VPN_ETA_AUTO_USER) -s "$env(VPN_ETA_AUTO_KEYCHAIN)-totp" -w} seed]} { exit 1 }
 		if {[catch {exec /usr/bin/perl -MDigest::SHA=hmac_sha1 -e {
 			my $seed = <STDIN>;
 			$seed = uc($seed);
@@ -946,7 +954,7 @@ expect {
 			printf "%06d", (unpack("N", substr($digest, $offset, 4)) & 0x7fffffff) % 1000000;
 		} << $seed} code]} { exit 1 }
 		send -- "${pin}${code}\r"
-		exp_continue
+		exp_continue -continue_timer
 	}
 	-re {[Ss]tate:[ \t]*[Cc]onnected} { exit 0 }
 	-re {([Aa]uthentication failed|[Ll]ogin failed|[Ss]tate:[ \t]*[Dd]isconnected)} { exit 1 }
@@ -958,9 +966,14 @@ EXPECT
 
 auto_connect_session() {
 	[ -n "$AUTO_CONNECT" ] && [ ! -e "$AUTO_PAUSE_FILE" ] || return 0
-	[ -n "${VPN_ETA_HOST:-}" ] && [ -n "${VPN_ETA_USER:-}" ] || return 1
 	may_write_state || return 0
 	mkdir -p "$STATE_DIR" 2>/dev/null || return 1
+	if [ -z "${VPN_ETA_HOST:-}" ] || [ -z "${VPN_ETA_USER:-}" ]; then
+		: >"$AUTO_PAUSE_FILE"
+		notify "VPN automatic login paused" \
+			"Set VPN_ETA_HOST and VPN_ETA_USER before resuming automatic connection."
+		return 1
+	fi
 	now=$(now_epoch)
 	last=$(cat "$AUTO_RETRY_FILE" 2>/dev/null)
 	case $last in '' | *[!0-9]*) last=0 ;; esac

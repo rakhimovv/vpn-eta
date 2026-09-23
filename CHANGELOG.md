@@ -12,6 +12,10 @@ Notable changes. Dates are release dates; the format follows
   asks for a password, and generates the current code then. Repeated attempts
   are spaced at least five minutes apart. A failed login or manual Disconnect
   pauses automatic reconnection until it is resumed from the menu.
+- `VPN_ETA_KEYCHAIN_SERVICE` gives a second plugin copy its own PIN and TOTP
+  items when another gateway uses a different token.
+- Keychain reads and the Cisco prompt sequence are time-bounded so a blocked
+  credential request cannot leave a SwiftBar refresh waiting indefinitely.
 - Informational menu rows no longer behave like clickable actions in SwiftBar.
 - Uninstall now reads a configured state directory before removing the config
   that names it.

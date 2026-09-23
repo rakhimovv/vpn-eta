@@ -36,10 +36,8 @@ are measuring.
 **What no green suite covers: the menu-parameter line itself.** Both suites drive the action
 paths the way SwiftBar would — `swiftbar/vpn-eta.1m.sh disconnect`, `… mute` — but nothing here
 exercises SwiftBar reading `bash=… param0=… terminal=false` and launching the script, so a typo
-in that half of an action item is invisible to `tests/` and to ShellCheck alike. Two things
-constrain it instead: the sibling plugin `lidguard.10s.sh` in the same plugin folder has used
-that exact form since August, and a hand-click is the only real proof. Click a changed item once
-before trusting it in an incident.
+in that half of an action item is invisible to `tests/` and to ShellCheck alike. A hand-click
+is the only real proof. Click a changed item once before trusting it in an incident.
 
 SwiftBar treats an informational row with `color=` as an action even without
 `bash=`, `href=` or `refresh=`. Keep colour on the menu-bar title; omit it from
