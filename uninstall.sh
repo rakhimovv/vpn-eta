@@ -64,6 +64,15 @@ else
 	say "no plugin found to remove${PLUGIN_DIR:+ in $PLUGIN_DIR}"
 fi
 
+# Read a custom state path before removing the config that names it.
+if [ -z "$STATE_DIR" ] && [ -r "$CONFIG_PATH" ] && bash -n "$CONFIG_PATH" 2>/dev/null; then
+	STATE_DIR=$(
+		# shellcheck source=/dev/null
+		. "$CONFIG_PATH" 2>/dev/null
+		printf '%s' "${VPN_ETA_STATE_DIR:-}"
+	)
+fi
+
 if [ -e "$CONFIG_PATH" ]; then
 	if [ "$ALL" = 1 ] || confirm "remove your settings at $CONFIG_PATH?"; then
 		rm -f "$CONFIG_PATH"
@@ -77,14 +86,6 @@ fi
 # The session log and the cached countdown. A configured VPN_ETA_STATE_DIR wins,
 # because otherwise "remove all of it" would clear the default directory and
 # leave the one actually in use untouched.
-if [ -z "$STATE_DIR" ] && [ -r "$CONFIG_PATH" ] && bash -n "$CONFIG_PATH" 2>/dev/null; then
-	STATE_DIR=$(
-		# shellcheck source=/dev/null
-		. "$CONFIG_PATH" 2>/dev/null
-		printf '%s' "${VPN_ETA_STATE_DIR:-}"
-	)
-fi
-
 if [ -n "$STATE_DIR" ]; then
 	state_dirs=$STATE_DIR
 elif [ "$SCOPED" = 1 ]; then
