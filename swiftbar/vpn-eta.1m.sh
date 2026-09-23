@@ -1284,8 +1284,10 @@ if [ -z "$remaining" ] && [ "$bare_state" != Connected ]; then
 	clear_state
 	if [ "$bare_state" = Disconnected ] && [ -n "$AUTO_CONNECT" ] &&
 		[ ! -e "$AUTO_PAUSE_FILE" ] && may_write_state; then
-		mkdir -p "$STATE_DIR" 2>/dev/null &&
-			/usr/bin/lockf -t 0 -k "$STATE_DIR/auto.lock" "$0" auto-connect >/dev/null 2>&1 || :
+		if mkdir -p "$STATE_DIR" 2>/dev/null; then
+			# Another scheduled tick may already be connecting.
+			/usr/bin/lockf -t 0 -k "$STATE_DIR/auto.lock" "$0" auto-connect >/dev/null 2>&1 || true
+		fi
 	fi
 	echo "${BAR_PREFIX}off | color=gray"
 	echo "---"
