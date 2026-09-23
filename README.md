@@ -154,23 +154,26 @@ login fails. SMS codes still need to be entered by hand. Choosing manual login
 pauses automatic connection until you resume it from the menu.
 
 It uses the PIN and **secret key** of your VPN TOTP token. The secret key is the long value
-you added to KeePassXC, not the six-digit code that changes every 30 seconds. Store the
-PIN and secret key locally in macOS Keychain; the commands below prompt for each value
-without putting it in the command line. Run them yourself and do not paste the values into
-the repo or a message:
+you added to KeePassXC, not the six-digit code that changes every 30 seconds.
 
-```sh
-security add-generic-password -U -a 'your.ad.login' -s vpn-eta-pin -w
-security add-generic-password -U -a 'your.ad.login' -s vpn-eta-totp -w
-```
-
-Then set these lines in `~/.config/vpn-eta/config`, using your own login and existing
-saved profile name:
+First set these lines in `~/.config/vpn-eta/config`, replacing both placeholders with your
+own AD login and existing saved profile name:
 
 ```sh
 VPN_ETA_HOST='your-saved-profile'
 VPN_ETA_USER='your.ad.login'
 VPN_ETA_AUTO_CONNECT=1
+```
+
+Then store the PIN and secret key in macOS Keychain. The plugin looks both items up under
+the `VPN_ETA_USER` login, so the commands below read it from the config rather than asking
+you to type it again; they prompt for each value without putting it in the command line.
+Run them yourself and do not paste the values into the repo or a message:
+
+```sh
+u=$(. ~/.config/vpn-eta/config && printf %s "$VPN_ETA_USER") && [ -n "$u" ] &&
+security add-generic-password -U -a "$u" -s vpn-eta-pin -w &&
+security add-generic-password -U -a "$u" -s vpn-eta-totp -w
 ```
 
 For a second gateway with a different token, set `VPN_ETA_KEYCHAIN_SERVICE` in that
@@ -272,7 +275,7 @@ A second copy installed for another gateway is not found automatically. SwiftBar
 preferences are left as they were, since other plugins may now depend on them.
 If you enabled automatic reconnection, the two Keychain items were added by you rather
 than the installer and remain after uninstall. Remove them with `security
-delete-generic-password -a 'your.ad.login' -s vpn-eta-pin` and the same command
+delete-generic-password -a '<your AD login>' -s vpn-eta-pin` and the same command
 with `vpn-eta-totp` as the service name. If you changed
 `VPN_ETA_KEYCHAIN_SERVICE`, use that prefix in both commands.
 
