@@ -189,8 +189,9 @@ KeePassXC does not need to be running for this mode. Anyone who can read those K
 items while your Mac is unlocked can generate the same login response, so enable this
 only if that local access trade-off is acceptable to you. If Cisco changes its login
 prompts, automatic login fails closed; you can still use `🔑 Start manually (SMS or TOTP)…`.
-The automatic path has been tested against a simulated Cisco prompt, not a live
-gateway. Verify one real reconnection before relying on it for unattended work.
+The automatic path has been tested against simulated prompts and one live Cisco
+Secure Client 5.1.14.145 session on macOS. Verify it on your gateway before
+relying on it for unattended work.
 The latest attempt's non-secret stages are kept in `auto-attempt` beside `history.log`
 (mode `0600`); they show whether Cisco reached the username prompt, Keychain was read,
 and the client accepted or rejected the login. The menu shows the pause reason after

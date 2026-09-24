@@ -12,6 +12,8 @@ Notable changes. Dates are release dates; the format follows
 - The menu offers a direct Keychain login when Cisco confirms a disconnect,
   alongside the separate manual SMS/TOTP path. Failed attempts record a
   credential-free stage trace and show the pause reason in the menu.
+- A controlled live renewal on macOS with Cisco Secure Client 5.1.14.145
+  reached a new session after reading both Keychain items.
 
 ## [1.3.0] — 2026-09-24
 

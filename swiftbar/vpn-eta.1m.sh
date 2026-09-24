@@ -1058,7 +1058,9 @@ auto_connect_session() {
 		auto_rc=$?
 	fi
 	if [ "$auto_rc" -eq 0 ]; then
-		printf '%s\tclient-connected\n' "$(now_epoch)" >>"$AUTO_ATTEMPT_FILE"
+		if [ -n "${VPN_ETA_AUTO_CONNECT_BIN:-}" ]; then
+			printf '%s\tclient-connected\n' "$(now_epoch)" >>"$AUTO_ATTEMPT_FILE"
+		fi
 		return 0
 	fi
 	case $auto_rc in

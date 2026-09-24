@@ -1112,6 +1112,8 @@ check "initial Cisco Disconnected does not end the login" "2" \
 	"$(grep -c 'preauth-disconnected' "$AUTO_DIR/state/auto-attempt")"
 check "automatic login records credential submission without values" "1" \
 	"$(grep -c 'credentials-submitted' "$AUTO_DIR/state/auto-attempt")"
+check "automatic login records a single connection result" "1" \
+	"$(grep -c 'client-connected' "$AUTO_DIR/state/auto-attempt")"
 
 printf 'pending\n' >"$AUTO_DIR/result"
 mkdir -p "$AUTO_DIR/explicit-state"
