@@ -36,26 +36,25 @@
 
 # ── What the menu bar shows ──────────────────────────────────────────────────
 
-# The word in front of the countdown. Worth changing if you run this plugin
-# twice against two gateways: "Work 6h 20m" and "Lab 2h 05m" beat two "VPN"s.
-# An emoji is the narrowest label there is, and an empty string removes the
-# label entirely — both are the lever to pull if the item is too wide.
-#   VPN_ETA_LABEL="VPN"   ->  VPN 6h 20m
-#   VPN_ETA_LABEL="🦍"    ->  🦍 6h 20m
-#   VPN_ETA_LABEL=""      ->  6h 20m
+# The default is a shield with no text. Restore the former text countdown if
+# you want the time visible without opening the menu.
+#VPN_ETA_BAR_MODE=icon
+
+# Prefix for the optional countdown mode; an empty string removes it.
+#   VPN_ETA_LABEL="Work" -> Work 6h 20m
+#   VPN_ETA_LABEL=""     -> 6h 20m
 #VPN_ETA_LABEL="VPN"
 
-# Drop the minutes from the MENU BAR while more than an hour is left: "6h"
+# In countdown mode, drop the minutes while more than an hour is left: "6h"
 # rather than "6h 20m". Under an hour the minutes are the whole point, so they
 # stay. The menu itself always shows the exact figure. Rounds down, so the menu
 # bar never claims more time than you have.
-#   VPN_ETA_COMPACT=1     ->  🦍 6h   ... and 🦍 45m under the hour
+#   VPN_ETA_COMPACT=1     ->  Work 6h   ... and Work 45m under the hour
 #VPN_ETA_COMPACT=
 
-# Countdown colour, in minutes remaining: red at or below the first, orange at
-# or below the second, green above. Separate from the notification marks below,
-# because a colour you glance at and an alert that interrupts you are not the
-# same decision.
+# Shield colour, in minutes remaining: red at or below the first, amber at or
+# below the second, neutral above. Text countdown mode keeps its former green.
+# These thresholds are separate from notification marks below.
 #VPN_ETA_CRITICAL_MINUTES=15
 #VPN_ETA_WARN_MINUTES=60
 

@@ -3,6 +3,18 @@
 Notable changes. Dates are release dates; the format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.4.0] — 2026-09-24
+
+### Added
+
+- The menu bar now shows a small outline shield whose colour distinguishes
+  connected, changing, disconnected, unreadable and urgent states. The precise
+  countdown remains in the menu. `VPN_ETA_BAR_MODE=countdown` restores the
+  former text display and honours `VPN_ETA_LABEL` and `VPN_ETA_COMPACT`.
+- A macOS network-state watcher asks SwiftBar for a fresh Cisco reading after
+  interface changes. The existing one-minute refresh remains for client changes
+  that do not affect a network interface.
+
 ## [1.3.2] — 2026-09-24
 
 ### Added

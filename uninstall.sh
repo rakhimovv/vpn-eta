@@ -8,6 +8,7 @@ set -eu
 cd "$(dirname "$0")"
 
 PLUGIN_NAME=vpn-eta.1m.sh
+WATCHER_NAME=com.rakhimov.vpn-eta.network-watch
 CONFIG_PATH=${VPN_ETA_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/vpn-eta/config}
 PLUGIN_DIR=""
 STATE_DIR=""
@@ -44,6 +45,7 @@ while [ $# -gt 0 ]; do
 done
 
 say() { printf '%s\n' "$*"; }
+xml_escape() { printf '%s' "$1" | sed -e 's/\&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g'; }
 
 # Deleting is the irreversible direction, so these prompts default to NO — the
 # opposite of the installer's. A run with no terminal keeps the file.
@@ -56,6 +58,19 @@ confirm() {
 }
 
 [ -z "$PLUGIN_DIR" ] && PLUGIN_DIR=$(defaults read com.ameba.SwiftBar PluginDirectory 2>/dev/null || true)
+
+# A scoped uninstall must never stop the watcher of a different installation.
+if [ -n "$PLUGIN_DIR" ]; then
+	watch_plist=$HOME/Library/LaunchAgents/$WATCHER_NAME.plist
+	watch_source=$PLUGIN_DIR/.vpn-eta/network-watch.swift
+	if [ -f "$watch_plist" ] && grep -Fq "<string>$(xml_escape "$watch_source")</string>" "$watch_plist"; then
+		launchctl bootout "gui/$(id -u)" "$watch_plist" >/dev/null 2>&1 || true
+		rm -f "$watch_plist"
+		say "removed network watcher"
+	fi
+	rm -f "$watch_source"
+	rmdir "$PLUGIN_DIR/.vpn-eta" 2>/dev/null || true
+fi
 
 if [ -n "$PLUGIN_DIR" ] && [ -e "$PLUGIN_DIR/$PLUGIN_NAME" ]; then
 	rm -f "$PLUGIN_DIR/$PLUGIN_NAME"

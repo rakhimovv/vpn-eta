@@ -44,11 +44,14 @@ actionless dropdown rows so they cannot be selected.
 
 ## Layout
 
-`swiftbar/vpn-eta.1m.sh` is the whole product — one bash file SwiftBar copies into its plugin
-folder and re-runs every minute (that is the `1m` in the name). It must stay self-contained:
-at runtime the repository is not there. `install.sh` and `uninstall.sh` (POSIX `sh`) only
-place that file and manage `~/.config/vpn-eta/config`. Tests live in `tests/`, never beside
-the plugin — SwiftBar runs every file in its plugin folder and chmods them executable itself.
+`swiftbar/vpn-eta.1m.sh` renders and runs every action as a standalone Bash file; SwiftBar
+reruns it every minute (the `1m` in the name). At runtime the repository is not there.
+`install.sh` also copies `swiftbar/network-watch.swift` into a hidden folder beside the plugin
+and registers a per-user LaunchAgent. It asks SwiftBar to rerun the plugin after macOS network
+changes; the plugin itself still confirms the state through Cisco. A missing watcher leaves the
+one-minute refresh intact. `install.sh` and `uninstall.sh` are POSIX `sh`. Tests live in
+`tests/`, never beside the plugin — SwiftBar runs every file in its plugin folder and chmods
+them executable itself.
 
 Output is SwiftBar's menu format: **the first line is the menu-bar item**, `---` opens the
 dropdown, and `| color= size= href= bash= param0= refresh=` are per-line parameters. Change a
@@ -70,9 +73,10 @@ deadline says nothing), and — when the client is silent — whether that addre
 bound to a `utun`. A transition state (`Connecting` / `Reconnecting` / `Disconnecting`) carries the
 deadline forward instead of clearing it; a Wi-Fi handover is not a session ending.
 
-Carried is not confirmed, and the menu bar says which: a transition marks the number with an
-ellipsis and turns orange, then red once one transition has run past `VPN_ETA_TRANSITION_LIMIT`
-minutes — or once the carried countdown is itself critical, which outranks it. The whole clock
+Carried is not confirmed, and the menu bar says which: the shield turns amber,
+then red once one transition has run past `VPN_ETA_TRANSITION_LIMIT`
+minutes — or once the carried countdown is itself critical, which outranks it. The optional
+text view marks the carried number with an ellipsis. The whole clock
 rides in `record_event`'s dedupe identity (`transition|<start epoch>[ stuck]`): the identity holds
 for as long as one transition lasts, so its start survives every tick without a sixth state file,
 and only the tick that changes it writes a log line or notifies. **Time the transition, never the

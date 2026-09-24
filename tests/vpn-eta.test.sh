@@ -16,6 +16,8 @@ export VPN_ETA_NOTIFY_SINK=$STATE_DIR/notifications
 # otherwise decide what these assertions are measuring. /dev/null is readable and
 # sources to nothing, so the plugin takes its documented defaults.
 export VPN_ETA_CONFIG=/dev/null
+# Preserve the historical text assertions while icon mode gets its own checks.
+export VPN_ETA_BAR_MODE=countdown
 
 pass=0
 fail=0
@@ -81,6 +83,43 @@ VPN>'
 
 out=$(VPN_ETA_TEST_STATS=$CONNECTED "$PLUGIN")
 check "connected shows the countdown" "VPN 2h 51m | color=green" "$(first_line "$out")"
+
+icon_out=$(VPN_ETA_BAR_MODE=icon VPN_ETA_TEST_STATS=$CONNECTED "$PLUGIN")
+icon_line=$(first_line "$icon_out")
+check "icon mode has no menu-bar label" "true" \
+	"$([[ $icon_line == ' | image='* ]] && echo true || echo false)"
+check "icon mode names the state in its tooltip" "true" \
+	"$([[ $icon_line == *'tooltip=VPN 171m remaining' ]] && echo true || echo false)"
+check "icon mode still shows the countdown in the menu" "true" \
+	"$([[ $icon_out == *'2h 51m remaining'* ]] && echo true || echo false)"
+default_line=$(VPN_ETA_TEST_STATS=$CONNECTED env -u VPN_ETA_BAR_MODE "$PLUGIN" | head -1)
+check "icon mode is the default" "true" \
+	"$([[ $default_line == ' | image='* ]] && echo true || echo false)"
+connected_icon=${icon_line#*image=}
+connected_icon=${connected_icon%%,*}
+off_line=$(VPN_ETA_BAR_MODE=icon VPN_ETA_TEST_STATS=$DISCONNECTED "$PLUGIN" | head -1)
+off_icon=${off_line#*image=}
+off_icon=${off_icon%%,*}
+check "disconnect changes shield colour" "false" \
+	"$([ "$connected_icon" = "$off_icon" ] && echo true || echo false)"
+critical_line=$(VPN_ETA_BAR_MODE=icon VPN_ETA_TEST_STATS='    Connection State:            Connected
+    Session Disconnect:          11 Minutes Remaining' "$PLUGIN" | head -1)
+critical_icon=${critical_line#*image=}
+critical_icon=${critical_icon%%,*}
+check "critical time changes shield colour" "false" \
+	"$([ "$connected_icon" = "$critical_icon" ] && echo true || echo false)"
+icon_state=$STATE_DIR/icon-estimate
+mkdir -p "$icon_state"
+SWIFTBAR_PLUGIN_DATA_PATH="$icon_state" VPN_ETA_TEST_PERSIST=1 VPN_ETA_TEST_STATS=$CONNECTED \
+	"$PLUGIN" >/dev/null
+estimated_line=$(SWIFTBAR_PLUGIN_DATA_PATH="$icon_state" VPN_ETA_BAR_MODE=icon \
+	VPN_ETA_TEST_IFCONFIG='utun1: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 1300
+    inet 10.3.3.3 --> 10.3.3.3 netmask 0xffffffff' \
+	VPN_ETA_TEST_STATS=$NOT_ATTACHED "$PLUGIN" | head -1)
+estimated_icon=${estimated_line#*image=}
+estimated_icon=${estimated_icon%%,*}
+check "an estimated deadline changes shield colour" "false" \
+	"$([ "$connected_icon" = "$estimated_icon" ] && echo true || echo false)"
 
 out=$(VPN_ETA_TEST_STATS='    Connection State:            Connected
     Session Disconnect:          58 Minutes Remaining' "$PLUGIN")
@@ -314,8 +353,6 @@ else
 	pass=$((pass + 1))
 fi
 
-# Both actions carried the ↻ glyph and sat next to each other, so an instant
-# reread and a tear-down-plus-SMS-reauth read as the same kind of button.
 # Every action item carries refresh=true now, so the reread is picked out by
 # being the only one that runs no command: `param0=` is what the others have.
 out=$(VPN_ETA_TEST_STATS=$CONNECTED "$PLUGIN")
@@ -323,9 +360,8 @@ start_glyph=$(printf '%s\n' "$out" | grep 'param0=start' | awk '{print $1}')
 refresh_glyph=$(printf '%s\n' "$out" | grep 'refresh=true' | grep -v 'param0=' | awk '{print $1}')
 check "the session action does not wear the refresh glyph" "false" \
 	"$([ "$start_glyph" = "$refresh_glyph" ] && echo true || echo false)"
-check "the reread says what it does not touch" \
-	"Re-reads the client; the VPN session is left alone" \
-	"$(printf '%s\n' "$out" | grep 'Re-reads' | sed 's/ | .*//')"
+check "the reread has a clear action label" "Refresh status" \
+	"$(printf '%s\n' "$out" | grep 'refresh=true' | grep -v 'param0=' | sed 's/ | .*//')"
 start_at=$(printf '%s\n' "$out" | grep -n 'param0=start' | cut -d: -f1)
 refresh_at=$(printf '%s\n' "$out" | grep -n 'refresh=true' | grep -v 'param0=' | cut -d: -f1)
 check "the cheap action comes first" "true" \
@@ -591,7 +627,7 @@ multi_bar() {
 check "a renamed copy reads its own config" "Lab 23h" "$(multi_bar vpn-eta-lab.1m.sh)"
 check "and the original still reads the shared one" "Work 23h 53m" "$(multi_bar vpn-eta.1m.sh)"
 # The dropdown is not short of space and keeps the exact number.
-check "the dropdown keeps the full countdown under compact" "🔐  23h 53m remaining" \
+check "the dropdown keeps the full countdown under compact" "23h 53m remaining" \
 	"$(env VPN_ETA_COMPACT=1 VPN_ETA_TEST_STATS="$(stats_for '23 Hours 53 Minutes Remaining')" \
 		"$PLUGIN" | sed -n '3p' | sed 's/ |.*//')"
 
@@ -645,7 +681,7 @@ for transient in Connecting Reconnecting Disconnecting \
 	check "$transient does not clear the session cache" "true" \
 		"$([ -e "$STATE_DIR/last-session" ] && echo true || echo false)"
 	check "$transient still offers to tear the session down" "true" \
-		"$(printf '%s\n' "$out" | grep -q 'Disconnects the current session first' && echo true || echo false)"
+		"$(printf '%s\n' "$out" | grep -q 'Replaces the current session' && echo true || echo false)"
 done
 
 # A renegotiation that will not end. It renders exactly like a healthy session
@@ -1021,17 +1057,15 @@ check "the mute lasts as long as the item promised" "true" \
 # have quietly stopped working, so the menu has to carry both states.
 rm -f "$STATE_DIR/muted-until"
 out=$(VPN_ETA_TEST_STATS=$CONNECTED "$PLUGIN")
-check "the menu offers the mute by its span" "🔕  Mute alerts for 1h" \
+check "the menu offers the mute by its span" "Mute alerts for 1h" \
 	"$(printf '%s\n' "$out" | grep 'param0=mute' | sed 's/ | .*//')"
-check "and a custom span is what the item promises" "🔕  Mute alerts for 1h 30m" \
+check "and a custom span is what the item promises" "Mute alerts for 1h 30m" \
 	"$(env VPN_ETA_MUTE_MINUTES=90 VPN_ETA_TEST_STATS="$CONNECTED" "$PLUGIN" |
 		grep 'param0=mute' | sed 's/ | .*//')"
 printf '%s\n' "$(($(date +%s) + 1800))" >"$STATE_DIR/muted-until"
 out=$(VPN_ETA_TEST_STATS=$CONNECTED "$PLUGIN")
-check "a mute in force offers the way out of it" "🔔  Resume alerts" \
+check "a mute in force offers the way out of it" "Resume alerts · muted for 30m" \
 	"$(printf '%s\n' "$out" | grep 'param0=unmute' | sed 's/ | .*//')"
-check "and says how much of it is left" "Muted for another 30m" \
-	"$(printf '%s\n' "$out" | grep 'Muted for another' | sed 's/ | .*//')"
 check "and does not also offer to mute again" "0" \
 	"$(printf '%s\n' "$out" | grep -c 'param0=mute')"
 # Zero is the way to take the item off the menu; "" on NOTIFY_MARKS is the way
@@ -1045,7 +1079,7 @@ reset_session_state
 # The menu is the only place the log is discoverable from.
 out=$(VPN_ETA_TEST_STATS=$CONNECTED VPN_ETA_TEST_PERSIST=1 "$PLUGIN")
 check "the menu links the session log" "true" \
-	"$(printf '%s\n' "$out" | grep -q 'Session log:.*href=file://' && echo true || echo false)"
+	"$(printf '%s\n' "$out" | grep -q 'Session log · .*href=file://' && echo true || echo false)"
 
 # The real state dir is under "Application Support", and a raw space would cut
 # the href short in the middle of a menu parameter.
@@ -1053,7 +1087,7 @@ SPACED="$STATE_DIR/with space"
 mkdir -p "$SPACED"
 SWIFTBAR_PLUGIN_DATA_PATH="$SPACED" run_live "$(stats_for '3 Hours 0 Minutes Remaining')"
 out=$(SWIFTBAR_PLUGIN_DATA_PATH="$SPACED" VPN_ETA_TEST_STATS=$CONNECTED VPN_ETA_TEST_PERSIST=1 "$PLUGIN")
-log_line=$(printf '%s\n' "$out" | grep 'Session log:')
+log_line=$(printf '%s\n' "$out" | grep 'Session log ·')
 check "a state path with spaces is encoded" "true" \
 	"$(printf '%s' "$log_line" | grep -q '%20' && echo true || echo false)"
 # A raw space would end the href parameter mid-path, so what SwiftBar receives

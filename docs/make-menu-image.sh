@@ -68,7 +68,14 @@ shoot() {
 		}
 		sub(/[[:space:]]+$/, "", line)
 
-		if (NR == 1) { bar = line; barcolour = attr(params, "color"); next }
+		if (NR == 1) {
+			bar = line
+			barcolour = attr(params, "color")
+			barimage = attr(params, "image")
+			split(barimage, icons, ",")
+			barimage = icons[2]
+			next
+		}
 		# SwiftBar puts a separator right after the menu-bar line; a real menu
 		# does not draw a rule against its own top edge.
 		if (line == "---") { if (rows == 0) next; kind[rows] = "sep"; rows++; next }
@@ -97,12 +104,16 @@ shoot() {
 		printf "  body { background: linear-gradient(150deg, #6b7f9e 0%%, #8a9bb4 45%%, #b3a898 100%%); overflow: hidden; }\n"
 		printf "  .menubar { height: 26px; background: rgba(0,0,0,.55); display: flex; align-items: center; justify-content: flex-end; padding-right: 150px; }\n"
 		printf "  .menubar span { color: #fff; font-size: 13px; letter-spacing: .1px; }\n"
+		printf "  .menubar img { width: 12px; height: 12px; object-fit: contain; }\n"
 		printf "  .menu { width: 372px; margin: 7px 0 0 150px; padding: 5px 0; border-radius: 10px;\n"
 		printf "          background: rgba(247,247,249,.97); box-shadow: 0 12px 34px rgba(0,0,0,.34), 0 0 0 .5px rgba(0,0,0,.14); }\n"
 		printf "  .row { padding: 2px 13px; white-space: nowrap; }\n"
 		printf "  .sep { height: 1px; background: rgba(0,0,0,.13); margin: 5px 12px; }\n"
 		printf "</style>\n"
-		printf "<div class=\"menubar\"><span>%s</span></div>\n", esc(bar)
+		if (barimage != "")
+			printf "<div class=\"menubar\"><img src=\"data:image/png;base64,%s\"></div>\n", barimage
+		else
+			printf "<div class=\"menubar\"><span>%s</span></div>\n", esc(bar)
 		printf "<div class=\"menu\">\n"
 		for (i = 0; i < rows; i++) {
 			if (kind[i] == "sep") { printf "  <div class=\"sep\"></div>\n"; continue }
@@ -123,8 +134,7 @@ shoot() {
 run_plugin() {
 	VPN_ETA_CONFIG=/dev/null \
 		VPN_ETA_STATE_DIR="$STATE" \
-		VPN_ETA_LABEL="🦍" \
-		VPN_ETA_COMPACT=1 \
+		VPN_ETA_BAR_MODE=icon \
 		"$@" ./swiftbar/vpn-eta.1m.sh
 }
 

@@ -3,12 +3,12 @@
 # <xbar.title>VPN session ETA</xbar.title>
 # <xbar.desc>Shows the server-reported time remaining in the VPN session.</xbar.desc>
 # <xbar.author>Ruslan Rakhimov</xbar.author>
-# <xbar.version>v1.3.2</xbar.version>
+# <xbar.version>v1.4.0</xbar.version>
 
 # The plugin is COPIED into SwiftBar's folder, so the installed file has no link
 # back to the tag it came from. Without this a bug report can name the macOS,
 # SwiftBar and Cisco versions and still not say which vpn-eta is running.
-VERSION=1.3.2
+VERSION=1.4.0
 
 export PATH="/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin"
 
@@ -68,13 +68,19 @@ AUTO_RETRY_FILE=$STATE_DIR/auto-retry
 AUTO_PAUSE_FILE=$STATE_DIR/auto-paused
 AUTO_ATTEMPT_FILE=$STATE_DIR/auto-attempt
 
-# What the menu bar says in front of the countdown. Two menu-bar items showing
-# "VPN" tell you nothing, so a second gateway can be labelled "Work" or "Lab".
+# Prefix for the optional text countdown. Two menu-bar items showing "VPN"
+# tell you nothing, so a second gateway can be labelled "Work" or "Lab".
 # Deliberately `-` and not `:-`: an empty value means "no label", which is how
 # you get the narrowest possible item, and `:-` would override that with VPN.
 LABEL=${VPN_ETA_LABEL-VPN}
 # Built once so an empty label leaves no stray leading space in the menu bar.
 BAR_PREFIX=${LABEL:+$LABEL }
+# The icon-only view is the default. The old countdown remains available for
+# installations that use the menu bar itself as a clock.
+case ${VPN_ETA_BAR_MODE:-icon} in
+countdown) BAR_MODE=countdown ;;
+*) BAR_MODE=icon ;;
+esac
 # Drops the minutes from the menu bar while more than an hour is left. Written
 # out because `0` is a word people reach for to mean off, and a bare emptiness
 # test would read it as on.
@@ -97,7 +103,8 @@ TEARDOWN_GRACE_SECONDS=$(number_or "${VPN_ETA_TEARDOWN_GRACE:-300}" 300)
 MUTE_MINUTES=$(number_or "${VPN_ETA_MUTE_MINUTES:-60}" 60)
 
 # Colour thresholds for the countdown, in minutes: at or below the first it goes
-# red, at or below the second orange, otherwise green. They are independent of
+# red, at or below the second orange, otherwise the optional text view is green.
+# The icon-only view uses a neutral shield for a healthy connection. They are independent of
 # NOTIFY_MARKS on purpose — a colour you glance at and a notification that
 # interrupts you do not deserve the same threshold.
 CRITICAL_MINUTES=$(number_or "${VPN_ETA_CRITICAL_MINUTES:-15}" 15)
@@ -431,6 +438,53 @@ color_for_minutes() {
 	fi
 }
 
+# BEGIN SHIELD ICONS
+ICON_NORMAL='iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAACXBIWXMAAA7DAAAOwwHHb6hkAAAAGXRFWHRTb2Z0d2FyZQB3d3cuaW5rc2NhcGUub3Jnm+48GgAAAa9JREFUSIntlbFrU0Ecxz/fl0RSAtqlk0MEF7e8XAJpLIqBDv4PbrY6uUgt6qCDDlqlg+AkdVDwfyh1iCiUV3h5bTcn6dJBXJqAUIx5P4dYjUm0MWm2fqc77u7z4XfH3cnMGGe8sdKB5EHDFaZfGt6lo4CK+F1UC+agowJDl8Gyo+Mt22a1k+wa/bxZWz87Cj5fKO929sd+BseCY8HRCurAqVFgkvSTUe8n2AEyzs0MfZt9fzoLZECfegQSqwAxravDCpRgDsBos/4QeDRfAQ1Ji86Vcv8Lz+dnfDMWgHo6Fb/uEYRhWDe4BkyYvLfOlWcHhTtXnsWL14AJmc0HQdD4VVX3h+MXyjcFT4AE8MZaurO1tb5Ln/j++dNK2GPgCtBCdmszDJ51zukRAOQKpQvCeyE4B3wFHk2eTC9Xq9V9gEqlkt5r7C8Ad4GMwUcjvr5d2/jQzeorACgWi6nvlroh7D5oEtiR2SKASU+BM2B7hh4k1XwehmGzH+evgoM4d3EKfXtoaJ72tgG0hK1gJ+5F0fsv/1p/qOC3qJRDWgLA7HYUbWwPsm5gwbAZ+1v0A08qkLfzeD4DAAAAAElFTkSuQmCC,iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAACXBIWXMAAA7DAAAOwwHHb6hkAAAAGXRFWHRTb2Z0d2FyZQB3d3cuaW5rc2NhcGUub3Jnm+48GgAAAY1JREFUSIntlDFPFEEUgL93HHg4m2BIrEjExB+grQWJBQU/wPgDhJLEWBgLAoVWhtYSK/4EpZW9FZ0hJBRqcbL35u3irfcs2CUrLgfccR0vmWRn33vfN5PZHXF3JhmtidKBdvUQo31yl2c3ARXxzyHcXYV/diArIiyOD2cRZKWat8/lvyfJ7KNxBDFmR/X5xM/gVnAruFGBHwNzY/LklOHHDYLWARDyPB/5by57A7S+/Sdw9z2Aohi8HFVQFIPVOgtAquu62+3OzczcOQSZhsHTEMLX68BjjE+g9QXk98lJ58H8PGm18rPR69kLVXNV+6GaL9dzw4ZqvnzaY97r2fN6rqHYXqtaX9UGqrZrZgsXgc1sQdV2y9q+qr06X9PYmKbZkqrtl7vRGLMNd+/UajoxZhuqpmXNfppmS02sszNoiOkYs3VgC7gHHLjzBkCEbeAh8At4F8LsR6DfBBkmAEBV70P7vYivAVPl6z/usgPFZpIkP4f1XyqoIsb4GKY+lPy3V/3KriwYNSZ+F/0FbrlKH0LnVlgAAAAASUVORK5CYII='
+ICON_AMBER='iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAACXBIWXMAAA7DAAAOwwHHb6hkAAAAGXRFWHRTb2Z0d2FyZQB3d3cuaW5rc2NhcGUub3Jnm+48GgAAAbpJREFUSIntlT9rU1EYh59f7i2YBntvhk4OKbi4VXAWOgTSgt/ASVu1NiUgtWiHOujgPxwMjVKxFAW/gdRcXQqdO7g5SZcOUtTeiFVIcl+HJJI2UWOabP1N58A5z3PeczjnyMzoZ2J9pQNuoxFk/RXDxnoBFVrPFHYnoakCw8aBVA/4qToLaKqgnk/jhfDkYejFrLfd3O/7GRwJjgQ9FAhCwDsUTRLg1Vn7BcAWkFibTXZ9m4vTfgpIGHxsEZgoAjhEF7sVoGgSQNRY+wRu2XkBlMw0H+SSo//LXssmTyPNAWHkuC9bBOnlL6GkS2Bxq0bvghk/3Sk8mPHTMaK3YHFDUxP5z6XfRR38cIpZ7xrwAHCAV5WofPPc071t2uT11cETbmzgHnAeqAquZwrh4+YxLYLaiobOmvQMOAV8N3Q3vhc+Glu1nwDrF3Tsx6A3J2wBSAAfZHY586S0cZDVVgCweUUDO+7QrOCWgQ9sGZoHEPYQGBHsGtwerpSWzixbuR3nj4JG3uSOD6uqO6ApatsGUAV7bo4tTuS/7fxt/j8FjQS55KhVovsAcmM3Mvmv7zuZ17Gg2/T9LfoFaHKWEQZ4uboAAAAASUVORK5CYII=,iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAACXBIWXMAAA7DAAAOwwHHb6hkAAAAGXRFWHRTb2Z0d2FyZQB3d3cuaW5rc2NhcGUub3Jnm+48GgAAAbVJREFUSIntlT9rU1Echp9fciuGG6kVxMEhgotbBV2FSnNL0vYbdLPVyUVqUQcddPAfDoJTqUMFv0FyGxqlBVcd3JykS4fiYFNzsNh78zo0gdAbNabJ1nc6/37Pw+FwzjFJDDKpgdIBr9Vw5eC1jLF+QE2s+1PVWWjbgVIUgFwf+LkmC2jbwb6arWyxev4w9PpKsNneH/gZHAmOBP0UiJqJ4cPhzEwMI2oJgbANgb8bjvd8m7crhZzAN/iaEBiNCkBkdq1XgdeIZgFkVBKCvWO2DOwgW3Clwuj/wl04cRGYB2q/GHqTEIzkqzXgOpBRKq66cpDvGl4O8kKrQAbT3KliuNOas4MfjguDW4JnQFrordfQ3cz0+0065Gdp/GyUsieGzQCxYbf9ydWX7WsSAoAf5fwVM1sELhg4icdZP3rB2NouAOtXj9edN2/GPYEPfJF048TUuw8HWR0FAHy6POS2Rm4KHgAnDW3IWNgv4rmwc8C2wUP/zPdXXPq41wnzZ0Ez9ZXJ0yh6BJoD0s3hGGwJ8+5ni+G3v9X/U9CKKxVGlY6fAlicvuNPVz53U9e1oNcM/C36DZw9ngMv/autAAAAAElFTkSuQmCC'
+ICON_RED='iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAACXBIWXMAAA7DAAAOwwHHb6hkAAAAGXRFWHRTb2Z0d2FyZQB3d3cuaW5rc2NhcGUub3Jnm+48GgAAAblJREFUSIntlT1PFFEUhp+zHwbcAhsqiyWxscPwMaMmJJBQDBJ/gR0glY1BohZaaOEHoTCxMlpIwi8gwYkUkJDgzrCa2FEZGgpD45KoBHb2tWDWbHZXWJfdjre6k9zzPPfcm3vHJNHOJNpKB1LlQeB675ANt4RqWnMDfxIqO5B5QLYF+GzMAio6iPPdDT9cOg09cMZ2Kr/bfgZngjNBKwVSAeg6Fc3MgK6YVSUwtoHMRt9407c5d9XLAhmwbzUCYT5AMhVNNCuwiMmjtcqvEaRLxffAHths6Hq9/wvfdMavADNAQcnEQo2gP79SELoNdCJbyTneaKPwnOONitLHuHbKzS3v/e2q+ocTDo7dlfESSAKLpVTqwbWNpR3q5NP1mxcTxeJz4BYQge65of+qck6NACB0vSHJ3gCXgZ8ye7Z//vf88OrqPsDayEhHx6/OGZMeAhlgy0zTTuCvV7PqCgA+DwykI+u+I9NjsAvANrLZuGoO6AH9MNmTpHZf9+fzh/U4/xSUs953o/tcWk8RUxxtG0CE8fbg0B4NfVnePa7+REE5oev1SvYCwEz3ncD/2khdw4Jm0/a36A8MjJtkNbcccQAAAABJRU5ErkJggg==,iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAACXBIWXMAAA7DAAAOwwHHb6hkAAAAGXRFWHRTb2Z0d2FyZQB3d3cuaW5rc2NhcGUub3Jnm+48GgAAAYhJREFUSIntlT1LglEYhq9HExSHImhqMGhpsz8QNDT0H5pKKzUJoiLfsqIP0oqGJDKjiIL+g9QS9AvamqKlIYLIIBDC92lQw/KtzI/Nezpfz3VxOJxzRFVpZGwNpQMtn62gcQz014l7RTLmg687GAQ8dYB7CiygdAf5PJKMddeEDxoPpd2Gn0FT0BTUV5BBaK2JJiIFRsZKcI/iJhyt/jYHIh4UN8qdhUDSAJjmSNUCFV8eRbpcYJqnwCuqswQi3n/DJxZ6EZ0GMjicZ+WCVDwDOgq4ELkkZAxUDA8ZA5jmBeBCxU9i+bU4JWUfTtCYArYAO8o5Yo+QXH/AKsFoJ5qLIwwBOVRnOIjvli4pFwCE5vtQPQR6EN5QYmSdO5wsZwEYXnHizE4jGChu4BaRMfY3rr+jrAUA4+MObO1hVJcQaQPuUZktVG0DXai+ILKK+bxHKvVuhflZUMzkfAfvrIH6AXthNAdyhINFEhtPv5X/LSgmEPEitk0A1JzjIH5TSVnlgirT8LfoA1OHgdGPBNYpAAAAAElFTkSuQmCC'
+ICON_MUTED='iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAACXBIWXMAAA7DAAAOwwHHb6hkAAAAGXRFWHRTb2Z0d2FyZQB3d3cuaW5rc2NhcGUub3Jnm+48GgAAAa5JREFUSIntlT9LG2Ecxz+/ywUMqdilk0OELm72DRQ6OPgeupTGHoLekKRH6tCKOmh65k+5RiS0oILvQewi+ArcOhUXh9KlpxUKyd2vgxeIXmzTmGz5Ts/fz4cfD8/ziKoyzBhDpQNmu+FW6p+BZwPiHjv5xSzcrGAOyAwAnolYQEcFUb47+cXH96G7lfp5Z3/oZzASjASDFfjAxD15EjH8mEBFzoB0uVzv+zZv1nYyQFpFv8UEhuohQAgv+xUkgiAb0Q5jgqCZ3AMuEJxSxZv5X7hb236CUAD8lBnsxwTFouWL8ApIGRhftmrebK/wrZo3S6hHQEpV5m3bvmjPye0Pxy1v5xB9DyRADkwx3uRyC+d0SbW6M9nScBP0ORCg+topLH3oXBMTALhV7ylqNIBp4ErQjavLB+WVlRe/AVZXd8fS478KiiwDaeArElpOzj65zeoqAGg0Gkn/srWE6DvgIXCmKg6AiLrAFPATlbWJcfOjZVnNbpw7Be1seN4js2msA/NAIhoOgE+tZPh22bZ//G3/PwXtlCreTAKjdE0Pi8W8fdrLvp4F/Wbob9Ef/w2UAwPEy78AAAAASUVORK5CYII=,iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAACXBIWXMAAA7DAAAOwwHHb6hkAAAAGXRFWHRTb2Z0d2FyZQB3d3cuaW5rc2NhcGUub3Jnm+48GgAAAbNJREFUSIntlT9LW1EYh5839xYNAe0iHTqk4NJNv4Dg4NCCYDpcEpslVM3UpVhRBzvUoVVxKHQKFqJgvDeBJgEHsYvQT9CtU3FxEJfegGjpzX1dbmg0qcaYbP6m8/d5OOdwzhFVpZsJdZUOmLXCjl36gjDaEapyMJmITUH9CoRnQLQD+GjAAupWEOR4Mh4bvAt9xykd1de7fgb3gntBZwUu0H9HngQMt0GgcAhEcrmvbd9m2y5FgQgivxoEIdU9ADGMV+0KfJgC0IB1SWAY3iZQAZ1znOLQbeG5QmlYhFnAVa9nq0FgWZaLMAOEfeRbLl8eaxmeL4+Jzz4QFpXpZPJ5pdYnVz8c2y6/UdFVwEDZNg1zwbLGj2iSQmH3sVf1PiIkgarC25fx2Kf6MQ2CQDKiQgb0KXAK+uHPmbueSqXOAbLZbG9PuH8WZBGIgPwUJZ1ITHy/ymoqAMhkMg/6+h69VtF3wEPgUFTmAFR0DXgC/BaV95XK8ed0Ov23Gee/gn/bUBjwfHMZZBowguYq6IYZ8pYsyzq5bv6NglocpzjkIysAIXQ+Hn/xo5V5LQvaTdffogsvmJdO62KNRwAAAABJRU5ErkJggg=='
+# END SHIELD ICONS
+
+render_bar() {
+	icon=$1
+	legacy=$2
+	legacy_color=$3
+	status=$4
+	if [ "$BAR_MODE" = countdown ]; then
+		printf '%s | color=%s\n' "${BAR_PREFIX}${legacy}" "$legacy_color"
+		return
+	fi
+	case $icon in
+	connected) graphic=$ICON_NORMAL ;;
+	warn | transition | unknown) graphic=$ICON_AMBER ;;
+	critical | stuck) graphic=$ICON_RED ;;
+	off) graphic=$ICON_MUTED ;;
+	*) graphic=$ICON_RED ;;
+	esac
+	# SwiftBar renders the image even with an empty item title. The tooltip and
+	# the first menu row carry the full state for a user who cannot read the icon.
+	printf ' | image=%s tooltip=%s\n' "$graphic" "$status"
+}
+
+render_time_bar() {
+	minutes=$1
+	qualifier=${2:-}
+	color=$(color_for_minutes "$minutes")
+	case $color in
+	red) icon=critical ;;
+	orange) icon=warn ;;
+	*) icon=connected ;;
+	esac
+	render_bar "$icon" "$(format_menubar "$minutes")$qualifier" "$color" "VPN ${minutes}m remaining"
+}
+
+render_estimated_bar() {
+	minutes=$1
+	color=$(color_for_minutes "$minutes")
+	if [ "$color" = red ]; then icon=critical; else icon=unknown; fi
+	render_bar "$icon" "$(format_menubar "$minutes")" "$color" "VPN connected, time estimated"
+}
+
 save_state() {
 	mkdir -p "$STATE_DIR" 2>/dev/null || return 0
 	{
@@ -700,14 +754,12 @@ cache_matches_session() {
 # session tears the tunnel down and re-authenticates.
 start_button() {
 	if [ -n "$AUTO_CONNECT" ]; then
-		echo "🔑  Start manually (SMS or TOTP)… | bash=$0 param0=start terminal=true refresh=true"
+		echo "Start manually (SMS or TOTP)… | bash=$0 param0=start terminal=true refresh=true"
 	else
-		echo "🔑  Start new session… | bash=$0 param0=start terminal=true refresh=true"
+		echo "Start new session… | bash=$0 param0=start terminal=true refresh=true"
 	fi
 	if [ "${1-}" = active ]; then
-		echo "Disconnects the current session first; Cisco sign-in may be required | size=11"
-	else
-		echo "Connects the saved VPN profile; Cisco sign-in may be required | size=11"
+		echo "Replaces the current session | size=11"
 	fi
 }
 
@@ -715,13 +767,11 @@ start_button() {
 # terminal window, because ending a session asks Cisco for nothing — the
 # password and the one-time code are what *starting* one costs.
 disconnect_button() {
-	echo "⛔  Disconnect | bash=$0 param0=disconnect terminal=false refresh=true"
-	echo "Ends this session now; no drop alert follows | size=11"
+	echo "Disconnect | bash=$0 param0=disconnect terminal=false refresh=true"
 }
 
 refresh_button() {
-	echo "↻  Refresh countdown | refresh=true"
-	echo "Re-reads the client; the VPN session is left alone | size=11"
+	echo "Refresh status | refresh=true"
 }
 
 # Muting is visible only while it lasts, and the item that offers it is the same
@@ -729,11 +779,9 @@ refresh_button() {
 # from notifications that have simply stopped working.
 mute_button() {
 	if muted_for=$(mute_remaining); then
-		echo "🔔  Resume alerts | bash=$0 param0=unmute terminal=false refresh=true"
-		echo "Muted for another $(mute_span "$muted_for") | size=11"
+		echo "Resume alerts · muted for $(mute_span "$muted_for") | bash=$0 param0=unmute terminal=false refresh=true"
 	elif [ "$MUTE_MINUTES" -gt 0 ]; then
-		echo "🔕  Mute alerts for $(mute_span "$MUTE_MINUTES") | bash=$0 param0=mute terminal=false refresh=true"
-		echo "Silences the warnings and the drop alert; the countdown runs on | size=11"
+		echo "Mute alerts for $(mute_span "$MUTE_MINUTES") | bash=$0 param0=mute terminal=false refresh=true"
 	fi
 }
 
@@ -755,16 +803,16 @@ auto_button() {
 	fi
 	if [ "${1-}" = confirmed-disconnected ]; then
 		if [ -e "$AUTO_PAUSE_FILE" ]; then
-			echo "↻  Retry automatic login (Keychain) | bash=$0 param0=start-auto terminal=false refresh=true"
+			echo "Retry automatic login (Keychain) | bash=$0 param0=start-auto terminal=false refresh=true"
 		else
-			echo "🔑  Connect automatically (Keychain) | bash=$0 param0=start-auto terminal=false refresh=true"
+			echo "Connect automatically (Keychain) | bash=$0 param0=start-auto terminal=false refresh=true"
 		fi
 		return 0
 	fi
 	if [ -e "$AUTO_PAUSE_FILE" ]; then
-		echo "▶  Resume automatic reconnection | bash=$0 param0=resume-auto terminal=false refresh=true"
+		echo "Resume automatic reconnection | bash=$0 param0=resume-auto terminal=false refresh=true"
 	else
-		echo "⏸  Pause automatic reconnection | bash=$0 param0=pause-auto terminal=false refresh=true"
+		echo "Pause automatic reconnection | bash=$0 param0=pause-auto terminal=false refresh=true"
 	fi
 }
 
@@ -796,12 +844,12 @@ load_auto_progress() {
 
 render_auto_progress() {
 	if [ "$progress_age" -le "$AUTO_PROGRESS_EXPECTED_SECONDS" ]; then
-		echo "${BAR_PREFIX}connecting… | color=orange"
+		render_bar transition 'connecting…' orange 'VPN connecting'
 		echo "---"
-		echo "🔑  Automatic sign-in: ${progress_detail} | size=14"
+		echo "Automatic sign-in: ${progress_detail} | size=14"
 		echo "Started ${progress_age}s ago | size=11"
 	else
-		echo "${BAR_PREFIX}login delayed… | color=red"
+		render_bar stuck 'login delayed…' red 'VPN login delayed'
 		echo "---"
 		echo "Automatic sign-in has not reported a result after ${progress_age}s | size=14"
 		echo "Check Cisco Secure Client before trying again | size=11"
@@ -809,7 +857,6 @@ render_auto_progress() {
 	echo "---"
 	history_line
 	refresh_button
-	echo "Refresh countdown for the latest sign-in stage | size=11"
 }
 
 # A history nobody can find is not worth keeping, so the menu says when the
@@ -833,7 +880,7 @@ history_line() {
 		}
 	')
 	[ -n "$last" ] || return 0
-	echo "🕘  Session log: ${last} | href=file://$(urlencode "$HISTORY_FILE" "/") size=11"
+	echo "Session log · ${last} | href=file://$(urlencode "$HISTORY_FILE" "/") size=11"
 }
 
 # One block, so every render offers the same actions in the same order: above
@@ -1178,14 +1225,14 @@ render_unreadable() {
 		session=active
 		short=$(format_minutes "$cached_minutes")
 		record_event unreadable "$cached_address" "estimated=${cached_minutes}m tunnel=up"
-		echo "${BAR_PREFIX}$(format_menubar "$cached_minutes") | color=$(color_for_minutes "$cached_minutes")"
+		render_estimated_bar "$cached_minutes"
 		echo "---"
-		echo "🔐  about ${short} remaining | size=14"
+		echo "About ${short} remaining | size=14"
 		echo "Tunnel is still up; countdown estimated | size=12"
 		echo "${detail}, last confirmed ${cached_age_minutes}m ago | size=12"
 	elif any_tunnel_up; then
 		record_event unreadable "" "tunnel=up client=silent"
-		echo "${BAR_PREFIX}? | color=orange"
+		render_bar unknown '?' orange 'VPN status unknown'
 		echo "---"
 		echo "A tunnel is up but the session could not be read | size=12"
 		echo "${detail} | size=12"
@@ -1196,7 +1243,7 @@ render_unreadable() {
 		if record_event down "" "tunnel=none client=silent last_remaining=${cached_minutes:-unknown}"; then
 			announce_drop "${cached_minutes:-}"
 		fi
-		echo "${BAR_PREFIX}off | color=gray"
+		render_bar off off gray 'VPN disconnected'
 		echo "---"
 		echo "No tunnel interface and no readable session | size=12"
 		echo "${detail} | size=12"
@@ -1307,7 +1354,7 @@ if [ "${VPN_ETA_TEST_STATS+x}" = x ]; then
 	fi
 else
 	if ! find_vpn; then
-		echo "${BAR_PREFIX}? | color=red"
+		render_bar missing '?' red 'Cisco client missing'
 		echo "---"
 		echo "Cisco Secure Client not found"
 		exit 0
@@ -1406,9 +1453,14 @@ if [ -z "$remaining" ]; then
 			else
 				bar_color=orange
 			fi
-			echo "${BAR_PREFIX}$(format_menubar "$cached_minutes")… | color=$bar_color"
+			if [ -n "$stuck" ] || [ "$cached_minutes" -le "$CRITICAL_MINUTES" ]; then
+				bar_icon=stuck
+			else
+				bar_icon=transition
+			fi
+			render_bar "$bar_icon" "$(format_menubar "$cached_minutes")…" "$bar_color" "VPN ${state}"
 			echo "---"
-			echo "🔐  about ${short} remaining | size=14"
+			echo "About ${short} remaining | size=14"
 			echo "${state}… | size=12"
 			if [ -n "$stuck" ]; then
 				echo "${state} for ${transition_minutes}m — the tunnel may be stuck | size=12"
@@ -1417,9 +1469,10 @@ if [ -z "$remaining" ]; then
 			fi
 		else
 			if [ -n "$stuck" ]; then bar_color=red; else bar_color=orange; fi
-			echo "${BAR_PREFIX}… | color=$bar_color"
+			if [ -n "$stuck" ]; then bar_icon=stuck; else bar_icon=transition; fi
+			render_bar "$bar_icon" '…' "$bar_color" "VPN ${state}"
 			echo "---"
-			echo "🔐  ${state}… | size=14"
+			echo "${state}… | size=14"
 			if [ -n "$stuck" ]; then
 				echo "${state} for ${transition_minutes}m — the tunnel may be stuck | size=12"
 			else
@@ -1450,7 +1503,7 @@ if [ -z "$remaining" ] && [ "$bare_state" != Connected ]; then
 			VPN_ETA_AUTO_RENDER_ONLY=1 exec "$0"
 		fi
 	fi
-	echo "${BAR_PREFIX}off | color=gray"
+	render_bar off off gray 'VPN disconnected'
 	echo "---"
 	echo "${state:-Disconnected}"
 	echo "---"
@@ -1484,15 +1537,15 @@ if [ -z "$remaining" ]; then
 	record_event connected "$(client_address "$stats")" "remaining=unreported (client sent ${reported:-nothing})"
 	if load_state && cache_is_fresh && cache_matches_session "$(client_address "$stats")"; then
 		short=$(format_minutes "$cached_minutes")
-		echo "${BAR_PREFIX}$(format_menubar "$cached_minutes") | color=$(color_for_minutes "$cached_minutes")"
+		render_estimated_bar "$cached_minutes"
 		echo "---"
-		echo "🔐  about ${short} remaining | size=14"
+		echo "About ${short} remaining | size=14"
 		echo "Estimated from a reading ${cached_age_minutes}m ago | size=12"
 		echo "${reported:-Connected, but the client sent no session countdown} | size=12"
 	else
-		echo "${BAR_PREFIX}on | color=green"
+		render_bar connected on green 'VPN connected'
 		echo "---"
-		echo "🔐  Connected | size=14"
+		echo "Connected | size=14"
 		if [ -n "$reported" ]; then
 			echo "Session Disconnect: ${reported} | size=12"
 		else
@@ -1519,11 +1572,10 @@ if may_write_state; then
 	record_event connected "$address" "remaining=${total_minutes}m"
 fi
 
-echo "${BAR_PREFIX}$(format_menubar "$total_minutes") | color=$color"
+render_time_bar "$total_minutes"
 echo "---"
-echo "🔐  ${short} remaining | size=14"
-echo "Session limit set by the gateway | size=12"
-echo "Cisco Secure Client: ${remaining} | size=12"
+	echo "${short} remaining | size=15"
+	echo "Connected · confirmed by Cisco | size=11"
 # The whole field on purpose, where the branches above compare the word: a bare
 # `Connected` is the unremarkable case and says nothing worth a line, while
 # `Connected (session expiring soon)` is the client volunteering something the

@@ -1,7 +1,6 @@
 # vpn-eta
 
-A macOS menu-bar countdown for the Cisco Secure Client session limit, with warnings before it
-runs out.
+A macOS menu-bar shield for Cisco Secure Client, with the session countdown one click away.
 
 ![The menu bar item and its menu](docs/menu.png)
 
@@ -12,8 +11,9 @@ you mid-call or mid-`ssh`. Cisco does know the number: open its window and the s
 reads `01:06:47 (22 Hours 53 Minutes Remaining)`. But it is one window away, so you see it
 only when you think to look, and it never says anything at fifteen minutes left.
 
-This puts that number in the menu bar, notifies you before it expires, logs how each session
-ended, and ends or starts one from a menu item.
+The shield shows whether the session is healthy, changing or needs attention. Its menu shows
+the remaining time, warns before it expires, logs how each session ended, and lets you start
+or end one.
 
 > **Scope:** macOS, Cisco Secure Client or AnyConnect. If your VPN is WireGuard, OpenConnect
 > or Tailscale, this is not the tool — and those have good menu-bar apps already. They
@@ -27,6 +27,8 @@ ended, and ends or starts one from a menu item.
 - [SwiftBar](https://swiftbar.app) **2.1.0+** — `brew install --cask swiftbar`. Older
   versions type the start command as simulated keystrokes, which breaks under a non-Latin
   keyboard layout; see [Troubleshooting](#troubleshooting).
+- Apple's Swift command-line toolchain for immediate refresh after network changes.
+  If it is absent, installation keeps the one-minute refresh and says so.
 
 It runs Cisco's read-only `vpn stats` and `vpn hosts`, plus `vpn connect` / `vpn disconnect`
 when you click the start or the disconnect item, `ifconfig` to see whether the tunnel is up,
@@ -58,23 +60,25 @@ Keep the clone — the plugin is copied out and does not need it at runtime, but
 
 ## What you see
 
-| Menu bar | Means |
-|---|---|
-| `VPN 6h 20m` | Cisco reported this just now. Green; orange under an hour, red under fifteen minutes. |
-| `VPN 2h 44m` | Same number, extrapolated — the client went quiet but its tunnel is still bound. The menu says "estimated" and how old the reading is. |
-| `VPN 2h 44m…` | Connecting, reconnecting or disconnecting. The deadline is carried across — a reconnect is not a session ending — and the ellipsis says it is carried rather than confirmed. Orange; red once that reconnect has run five minutes without settling, or once the carried countdown is itself under fifteen minutes. |
-| `VPN …` | The same, with no deadline left to carry. |
-| `VPN on` | Connected, no countdown reported. Some gateways send none. |
-| `VPN ?` | A tunnel is up but unreadable — or Cisco Secure Client is missing. |
-| `VPN off` | A reported disconnect, or no session *and* no tunnel. |
+The menu bar holds one outline shield with no mark inside. Its colour changes with the state:
 
-It refreshes once a minute — the `1m` in the filename. `off` appears only on positive
+| Shield colour | Means |
+|---|---|
+| Neutral | Connected. The menu shows the precise remaining time and whether it is estimated. |
+| Amber | Less than an hour remains, the connection is changing, or Cisco cannot confirm its state. Open the menu for details. |
+| Grey | A reported disconnect, or no session *and* no tunnel. |
+| Red | Less than fifteen minutes remain, a transition is stuck, login is delayed, or Cisco is missing. Open the menu for the reason. |
+
+The installer adds a per-user watcher that requests a fresh Cisco read after a macOS network change.
+The plugin also refreshes once a minute — the `1m` in the filename — for quiet changes.
+The disconnected shield appears only on positive
 evidence, never because a read failed: `vpn stats` can exit 0 without ever reaching Cisco's
 daemon, and reporting that as a disconnect would make the indicator wrong exactly when you
 are leaning on it.
 
-Too wide? `VPN_ETA_LABEL="🦍"` or `""` shortens the front, and `VPN_ETA_COMPACT=1` drops the
-minutes while over an hour is left — `🦍 6h` instead of `VPN 6h 20m`.
+Prefer a text countdown? Set `VPN_ETA_BAR_MODE=countdown`. In that mode,
+`VPN_ETA_LABEL` changes its prefix and `VPN_ETA_COMPACT=1` drops the minutes while over an hour
+is left.
 
 In the wrong place? Hold ⌘ and drag the item to move it along the menu bar — that is macOS,
 not this plugin, so it works on any status item and the position sticks.
@@ -90,10 +94,11 @@ reads no `~/.zshrc`. A variable exported there reaches a terminal run and never 
 | Setting | Default | What it does |
 |---|---|---|
 | `VPN_ETA_HOST` | the only saved profile | Which profile the start item connects to. Needed only with more than one. Takes a name or a URL. |
-| `VPN_ETA_LABEL` | `VPN` | Text before the countdown. An emoji is narrowest; `""` removes it. |
-| `VPN_ETA_COMPACT` | unset | Drop the minutes while over an hour is left. Rounds down. |
-| `VPN_ETA_CRITICAL_MINUTES` | `15` | Countdown turns red at or below this. |
-| `VPN_ETA_WARN_MINUTES` | `60` | Countdown turns orange at or below this. |
+| `VPN_ETA_BAR_MODE` | `icon` | Set `countdown` to show the older text menu-bar item. |
+| `VPN_ETA_LABEL` | `VPN` | Prefix for the optional text countdown. `""` removes it. |
+| `VPN_ETA_COMPACT` | unset | In text mode, drop minutes while over an hour is left. Rounds down. |
+| `VPN_ETA_CRITICAL_MINUTES` | `15` | Shield turns red at or below this. |
+| `VPN_ETA_WARN_MINUTES` | `60` | Shield turns amber at or below this. |
 | `VPN_ETA_NOTIFY_MARKS` | `60 15` | Minutes left that raise a notification. `""` switches them off. |
 | `VPN_ETA_MUTE_MINUTES` | `60` | How long one click of `🔕 Mute alerts` lasts. `0` removes the item. |
 | `VPN_ETA_STATE_DIR` | SwiftBar's per-plugin data dir | Where the state file and `history.log` live. |
@@ -121,6 +126,10 @@ plugins=$(defaults read com.ameba.SwiftBar PluginDirectory)
 cp swiftbar/vpn-eta.1m.sh "$plugins/vpn-eta-lab.1m.sh"
 printf "VPN_ETA_HOST='lab.example.com'\nVPN_ETA_LABEL='Lab'\n" > ~/.config/vpn-eta/vpn-eta-lab.config
 ```
+
+A manually copied second plugin keeps the one-minute schedule; the installer adds the
+network watcher for its main `vpn-eta` plugin only. Use `VPN_ETA_BAR_MODE=countdown` in
+the second config if you want its menu-bar icon to carry a distinguishing label.
 
 ## Starting and ending a session
 
@@ -153,11 +162,11 @@ uses the same guarded login path immediately, even after a pause. It never tears
 connected or reconnecting session. While connected, `▶ Resume automatic reconnection`
 only arms future attempts. Choosing `⛔ Disconnect` pauses automatic reconnection.
 At the start of an automatic attempt, SwiftBar sends a `VPN connecting` notification
-and the menu bar shows `VPN connecting…`. `Refresh countdown` reads the latest
+and the shield turns amber. `Refresh status` reads the latest
 recorded stage and seconds elapsed, even if Cisco temporarily cannot return
 session statistics. A successful sign-in sends a
 `VPN connected` notification; a failed one names the reason and pauses retries.
-After 75 seconds without a result, the bar says `login delayed…` rather than
+After 75 seconds without a result, the shield turns red and the menu says `login delayed…` rather than
 silently looking idle. A progress marker older than five minutes expires.
 The separate `🔑 Start manually (SMS or TOTP)…` item opens Cisco's
 normal sign-in, so SMS remains a fallback if the saved TOTP token or automatic
@@ -252,12 +261,12 @@ not found`. `brew upgrade --cask swiftbar`.
 **Nothing in the menu bar.** SwiftBar must be running and pointed at the folder `install.sh`
 printed. Check it against Preferences → General → Plugin Folder.
 
-**`VPN ?` with "Cisco Secure Client not found".** Set `VPN_ETA_VPN_BIN`.
+**Red shield with "Cisco Secure Client not found" in the menu.** Set `VPN_ETA_VPN_BIN`.
 
 **"Cisco Secure Client has N saved profiles".** Set `VPN_ETA_HOST` — the message lists the
 profiles and the exact line to add.
 
-**`VPN ?` with "A tunnel is up but the session could not be read".**
+**Amber shield with "A tunnel is up but the session could not be read".**
 
 ![The menu when Cisco will not answer](docs/menu-silent.png)
 
@@ -301,6 +310,7 @@ with `vpn-eta-totp` as the service name. If you changed
 swiftbar/vpn-eta.1m.sh --version    # also works on the installed copy
 tests/vpn-eta.test.sh               # the plugin — no VPN, no SwiftBar, no network
 tests/install.test.sh               # install.sh and uninstall.sh
+python3 docs/make-shield-icons.py   # rebuild the embedded shields (requires Inkscape)
 docs/make-menu-image.sh             # regenerate the picture above
 ```
 

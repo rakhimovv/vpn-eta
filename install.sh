@@ -17,6 +17,9 @@ set -eu
 cd "$(dirname "$0")"
 
 PLUGIN_SRC=swiftbar/vpn-eta.1m.sh
+WATCHER_SRC=swiftbar/network-watch.swift
+WATCHER_NAME=com.rakhimov.vpn-eta.network-watch
+SWIFT_BIN=${VPN_ETA_SWIFT_BIN:-/usr/bin/swift}
 CONFIG_PATH=${VPN_ETA_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/vpn-eta/config}
 PLUGIN_DIR=""
 HOST=""
@@ -41,7 +44,7 @@ usage: ./install.sh [options]
                      $DEFAULT_PLUGIN_DIR)
   --config PATH      config file to write (default: $CONFIG_PATH)
   --host HOST        Cisco profile name or URL to connect to
-  --label TEXT       what the menu bar says before the countdown
+  --label TEXT       prefix when the optional text countdown is enabled
   --terminal APP     which terminal SwiftBar opens for "Start new session"
                      (Terminal, iTerm, Ghostty, Kitty)
   --yes              never prompt; take defaults
@@ -72,6 +75,7 @@ done
 # inside a config file the plugin sources every single minute. Single quotes,
 # with the only escape single quoting needs.
 shquote() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
+xml_escape() { printf '%s' "$1" | sed -e 's/\&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g'; }
 
 # Sets NAME=value in the config, replacing an existing line rather than adding a
 # second one the shell would silently let win.
@@ -232,6 +236,39 @@ mkdir -p "$PLUGIN_DIR"
 install -m 0755 "$PLUGIN_SRC" "$PLUGIN_DIR/"
 say "  installed $(basename "$PLUGIN_SRC") $("$PLUGIN_SRC" --version 2>/dev/null || echo '(version unknown)')"
 
+# A network event only requests a fresh Cisco reading. The scheduled 1m run
+# remains the fallback for a client transition with no interface change.
+if [ -x "$SWIFT_BIN" ] && "$SWIFT_BIN" --version >/dev/null 2>&1; then
+	watch_dir=$PLUGIN_DIR/.vpn-eta
+	watch_plist=$HOME/Library/LaunchAgents/$WATCHER_NAME.plist
+	mkdir -p "$watch_dir" "$(dirname "$watch_plist")"
+	install -m 0644 "$WATCHER_SRC" "$watch_dir/network-watch.swift"
+	if [ -f "$watch_plist" ]; then
+		launchctl bootout "gui/$(id -u)" "$watch_plist" >/dev/null 2>&1 || true
+	fi
+	cat >"$watch_plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>Label</key><string>$WATCHER_NAME</string>
+<key>ProgramArguments</key><array>
+<string>$(xml_escape "$SWIFT_BIN")</string>
+<string>$(xml_escape "$watch_dir/network-watch.swift")</string>
+<string>vpn-eta</string>
+</array>
+<key>RunAtLoad</key><true/>
+<key>KeepAlive</key><true/>
+</dict></plist>
+EOF
+	if launchctl bootstrap "gui/$(id -u)" "$watch_plist" >/dev/null 2>&1; then
+		say "  network-change refresh enabled"
+	else
+		warn "network watcher could not start; the one-minute refresh remains active"
+	fi
+else
+	warn "Swift toolchain not found; the one-minute refresh remains active"
+fi
+
 if [ "$set_plugin_dir" = 1 ]; then
 	# SwiftBar reads this once at launch, so it only takes effect on restart —
 	# which the last step does anyway.
@@ -286,12 +323,13 @@ else
 			if [ -n "$LABEL" ]; then
 				echo "VPN_ETA_LABEL=$(shquote "$LABEL")"
 			else
-				echo "# What the menu bar says before the countdown. An emoji is the"
-				echo "# narrowest label there is; an empty string removes it."
+				echo "# Prefix for the optional text countdown; the default is an icon."
 				echo "#VPN_ETA_LABEL='VPN'"
 			fi
 			echo
-			echo "# Drop the minutes from the menu bar while over an hour is left."
+			echo "# Use 'countdown' to restore the former text menu-bar item."
+			echo "#VPN_ETA_BAR_MODE='icon'"
+			echo "# In that mode, drop minutes while over an hour is left."
 			echo "#VPN_ETA_COMPACT=1"
 			echo
 			echo "# Minutes-remaining marks that raise a notification. '' turns them off."
@@ -353,7 +391,7 @@ else
 fi
 
 say ""
-say "The countdown appears in the menu bar within a minute."
+say "The shield appears in the menu bar within a minute; click it for the countdown."
 say "Settings:      $CONFIG_PATH"
 say "All options:   config.example"
 say "Uninstall:     ./uninstall.sh"

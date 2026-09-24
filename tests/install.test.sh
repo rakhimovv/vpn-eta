@@ -30,10 +30,12 @@ check() {
 # two commands that reach outside the sandbox. Everything under test still runs;
 # only its effect on this Mac is intercepted.
 mkdir -p "$SANDBOX/stub"
-for stubbed in osascript open; do
+for stubbed in osascript open launchctl; do
 	printf '#!/bin/sh\nexit 0\n' >"$SANDBOX/stub/$stubbed"
 	chmod +x "$SANDBOX/stub/$stubbed"
 done
+printf '#!/bin/sh\nprintf "Swift version 6.0\\n"\n' >"$SANDBOX/stub/swift"
+chmod +x "$SANDBOX/stub/swift"
 PATH=$SANDBOX/stub:$PATH
 export PATH
 
@@ -52,7 +54,8 @@ installer() {
 	case_dir=$SANDBOX/$1
 	shift
 	mkdir -p "$case_dir/plugins"
-	VPN_ETA_VPN_BIN="$SANDBOX/bin/vpn" "$REPO/install.sh" \
+	HOME="$case_dir" VPN_ETA_SWIFT_BIN="$SANDBOX/stub/swift" \
+		VPN_ETA_VPN_BIN="$SANDBOX/bin/vpn" "$REPO/install.sh" \
 		--plugin-dir "$case_dir/plugins" --config "$case_dir/config" "$@" 2>&1
 }
 
@@ -62,11 +65,42 @@ installer() {
 installer fresh >/dev/null
 check "the plugin is installed" "true" \
 	"$([ -x "$SANDBOX/fresh/plugins/vpn-eta.1m.sh" ] && echo true || echo false)"
+check "the network observer is installed outside SwiftBar's plugin scan" "true" \
+	"$([ -f "$SANDBOX/fresh/plugins/.vpn-eta/network-watch.swift" ] && echo true || echo false)"
+check "the user agent points at the observer" "1" \
+	"$(grep -c -F "$SANDBOX/fresh/plugins/.vpn-eta/network-watch.swift" \
+		"$SANDBOX/fresh/Library/LaunchAgents/com.rakhimov.vpn-eta.network-watch.plist")"
 check "the config is not world-readable" "600" \
 	"$(stat -f '%OLp' "$SANDBOX/fresh/config" 2>/dev/null)"
 # A profile name with spaces is the common case, not the exotic one.
 check "a profile name with spaces survives" "VPN_ETA_HOST='Americas East - SSL'" \
 	"$(grep '^VPN_ETA_HOST=' "$SANDBOX/fresh/config")"
+HOME="$SANDBOX/fresh" "$REPO/uninstall.sh" --plugin-dir "$SANDBOX/fresh/plugins" \
+	--config "$SANDBOX/fresh/config" --all >/dev/null 2>&1
+check "uninstall removes the matching network observer" "false" \
+	"$([ -e "$SANDBOX/fresh/plugins/.vpn-eta/network-watch.swift" ] && echo true || echo false)"
+check "uninstall removes its launch agent" "false" \
+	"$([ -e "$SANDBOX/fresh/Library/LaunchAgents/com.rakhimov.vpn-eta.network-watch.plist" ] && echo true || echo false)"
+
+installer 'escaped&path' >/dev/null
+check "the launch agent XML escapes its observer path" "1" \
+	"$(grep -c 'escaped&amp;path/plugins/.vpn-eta/network-watch.swift' \
+		"$SANDBOX/escaped&path/Library/LaunchAgents/com.rakhimov.vpn-eta.network-watch.plist")"
+HOME="$SANDBOX/escaped&path" "$REPO/uninstall.sh" \
+	--plugin-dir "$SANDBOX/escaped&path/plugins" --config "$SANDBOX/escaped&path/config" \
+	--all >/dev/null 2>&1
+check "the escaped observer is removed by the scoped uninstall" "false" \
+	"$([ -e "$SANDBOX/escaped&path/Library/LaunchAgents/com.rakhimov.vpn-eta.network-watch.plist" ] && echo true || echo false)"
+
+mkdir -p "$SANDBOX/no-swift/plugins"
+HOME="$SANDBOX/no-swift" VPN_ETA_SWIFT_BIN="$SANDBOX/no-swift/missing-swift" \
+	VPN_ETA_VPN_BIN="$SANDBOX/bin/vpn" "$REPO/install.sh" \
+	--plugin-dir "$SANDBOX/no-swift/plugins" --config "$SANDBOX/no-swift/config" --yes \
+	>/dev/null 2>&1
+check "without Swift the one-minute plugin still installs" "true" \
+	"$([ -x "$SANDBOX/no-swift/plugins/vpn-eta.1m.sh" ] && echo true || echo false)"
+check "without Swift no broken launch agent is installed" "false" \
+	"$([ -e "$SANDBOX/no-swift/Library/LaunchAgents/com.rakhimov.vpn-eta.network-watch.plist" ] && echo true || echo false)"
 
 # The config is sourced by the plugin every minute, so a hostile value in it is
 # not a formatting problem, it is execution. The single quotes below are the
@@ -78,7 +112,7 @@ check "a hostile label is quoted, not interpolated" \
 	"$(grep '^VPN_ETA_LABEL=' "$SANDBOX/hostile/config")"
 # shellcheck disable=SC2016
 check "and the plugin renders it literally" 'My "Work" $(id -un) VPN 2h 0m' \
-	"$(VPN_ETA_CONFIG="$SANDBOX/hostile/config" \
+	"$(VPN_ETA_BAR_MODE=countdown VPN_ETA_CONFIG="$SANDBOX/hostile/config" \
 		VPN_ETA_TEST_STATS='    Connection State:            Connected
     Session Disconnect:          2 Hours Remaining' \
 		"$REPO/swiftbar/vpn-eta.1m.sh" | head -1 | sed 's/ |.*//')"
@@ -136,10 +170,15 @@ mkdir -p "$canary"
 echo "irreplaceable" >"$canary/history.log"
 mkdir -p "$SANDBOX/scoped/plugins"
 : >"$SANDBOX/scoped/config"
+mkdir -p "$SANDBOX/data/Library/LaunchAgents"
+other_agent=$SANDBOX/data/Library/LaunchAgents/com.rakhimov.vpn-eta.network-watch.plist
+printf '<string>/another/plugin/.vpn-eta/network-watch.swift</string>\n' >"$other_agent"
 HOME=$SANDBOX/data "$REPO/uninstall.sh" --plugin-dir "$SANDBOX/scoped/plugins" \
 	--config "$SANDBOX/scoped/config" --all >/dev/null 2>&1
 check "a scoped uninstall does not delete state it was not pointed at" "irreplaceable" \
 	"$(cat "$canary/history.log" 2>/dev/null)"
+check "a scoped uninstall keeps another plugin's network observer" "true" \
+	"$([ -f "$other_agent" ] && echo true || echo false)"
 
 # Pointed at one explicitly, it removes exactly that one.
 HOME=$SANDBOX/data "$REPO/uninstall.sh" --plugin-dir "$SANDBOX/scoped/plugins" \
@@ -220,6 +259,21 @@ printf "VPN_ETA_HOST='x.example.com'\n" >"$SANDBOX/timid/config"
 	--config "$SANDBOX/timid/config" </dev/null >/dev/null 2>&1
 check "a piped uninstall keeps the config it could not ask about" "true" \
 	"$([ -e "$SANDBOX/timid/config" ] && echo true || echo false)"
+
+if [ "$(uname)" = Darwin ] && [ -x /usr/bin/swift ]; then
+	: >"$SANDBOX/watch-sink"
+	VPN_ETA_REFRESH_SINK="$SANDBOX/watch-sink" /usr/bin/swift \
+		"$REPO/swiftbar/network-watch.swift" vpn-eta --test-event >/dev/null 2>&1
+	check "a network event requests only the VPN plugin" \
+		"swiftbar://refreshplugin?name=vpn-eta" "$(cat "$SANDBOX/watch-sink")"
+	: >"$SANDBOX/watch-sink"
+	VPN_ETA_REFRESH_SINK="$SANDBOX/watch-sink" /usr/bin/swift \
+		"$REPO/swiftbar/network-watch.swift" vpn-eta --test-burst >/dev/null 2>&1
+	check "a burst of network changes requests one refresh" "1" \
+		"$(wc -l <"$SANDBOX/watch-sink" | tr -d ' ')"
+else
+	echo "SKIP Swift network observer runtime (macOS Swift required)"
+fi
 
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]
