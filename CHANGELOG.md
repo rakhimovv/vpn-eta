@@ -3,6 +3,16 @@
 Notable changes. Dates are release dates; the format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.3.2] — 2026-09-24
+
+### Added
+
+- Automatic sign-in now announces when it starts and when Cisco reports a
+  connection. While it runs, the menu bar shows `VPN connecting…` and the menu
+  shows its latest recorded stage and elapsed time. After 75 seconds without a
+  result, the bar says `login delayed…`; an orphaned marker expires after five
+  minutes instead of looking active forever.
+
 ## [1.3.1] — 2026-09-24
 
 ### Fixed

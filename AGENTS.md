@@ -98,6 +98,10 @@ login pauses further attempts. Manual Start and Disconnect also pause it, so an
 SMS fallback or intentional teardown cannot race the next scheduled tick.
 The `start-auto` menu action takes the same lock, rechecks Cisco's state, then
 clears pause/retry inside the lock before a single Keychain login attempt.
+The in-progress renderer reads only unfinished stages from `auto-attempt` and
+ages them against its first timestamp; an old trace cannot hold the bar on
+`connecting` forever. A refresh at attempt start makes progress visible before
+Cisco returns, and the action refreshes again on completion.
 
 Both of those last two are deadlines that suppress a notification, and neither suppresses a
 *log line* — the history is what an unexplained drop is reconstructed from later, and it is

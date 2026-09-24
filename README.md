@@ -152,6 +152,12 @@ instead of repeatedly trying a potentially bad token. While disconnected, the me
 uses the same guarded login path immediately, even after a pause. It never tears down a
 connected or reconnecting session. While connected, `▶ Resume automatic reconnection`
 only arms future attempts. Choosing `⛔ Disconnect` pauses automatic reconnection.
+At the start of an automatic attempt, SwiftBar sends a `VPN connecting` notification
+and the menu bar shows `VPN connecting…`. `Refresh countdown` reads the latest
+recorded stage and seconds elapsed. A successful sign-in sends a
+`VPN connected` notification; a failed one names the reason and pauses retries.
+After 75 seconds without a result, the bar says `login delayed…` rather than
+silently looking idle. A progress marker older than five minutes expires.
 The separate `🔑 Start manually (SMS or TOTP)…` item opens Cisco's
 normal sign-in, so SMS remains a fallback if the saved TOTP token or automatic
 login fails. It does not read Keychain; SMS codes still need to be entered by hand.

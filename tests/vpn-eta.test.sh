@@ -1119,13 +1119,23 @@ printf 'pending\n' >"$AUTO_DIR/result"
 mkdir -p "$AUTO_DIR/explicit-state"
 printf 'login-rejected\n' >"$AUTO_DIR/explicit-state/auto-paused"
 date +%s >"$AUTO_DIR/explicit-state/auto-retry"
+notify_file=$AUTO_DIR/progress-notifications
+refresh_file=$AUTO_DIR/progress-refreshes
+: >"$notify_file"
+: >"$refresh_file"
 env "${auto_env[@]}" VPN_ETA_STATE_DIR="$AUTO_DIR/explicit-state" \
+	VPN_ETA_NOTIFY_SINK="$notify_file" VPN_ETA_REFRESH_SINK="$refresh_file" \
+	SWIFTBAR=1 SWIFTBAR_PLUGIN_PATH=/somewhere/vpn-eta.1m.sh \
 	VPN_ETA_TEST_STATS="$DISCONNECTED" "$PLUGIN" start-auto >/dev/null
 check "the explicit automatic action retries through Keychain" "success" "$(cat "$AUTO_DIR/result")"
 check "the explicit automatic action remains enabled after success" "false" \
 	"$([ -e "$AUTO_DIR/explicit-state/auto-paused" ] && echo true || echo false)"
 check "the diagnostic trace is private" "600" \
 	"$(stat -f '%OLp' "$AUTO_DIR/explicit-state/auto-attempt")"
+check "automatic sign-in announces start and success" "VPN connecting,VPN connected" \
+	"$(cut -f1 "$notify_file" | paste -sd, -)"
+check "automatic sign-in refreshes the menu at start and finish" "2" \
+	"$(wc -l <"$refresh_file" | tr -d ' ')"
 
 : >"$AUTO_DIR/guard-attempts"
 cat >"$AUTO_DIR/guard-connect" <<'FAKE'
@@ -1265,6 +1275,65 @@ check "missing automatic-login settings are shown in the menu" "1" \
 	"$(printf '%s\n' "$out" | grep -c 'needs VPN_ETA_HOST and VPN_ETA_USER')"
 check "missing automatic-login settings pause attempts" "true" \
 	"$([ -e "$AUTO_DIR/incomplete-state/auto-paused" ] && echo true || echo false)"
+
+# The scheduled tick must render the new Cisco state after its background
+# connector finishes, instead of overwriting it with the old "off" reading.
+cat >"$AUTO_DIR/vpn-stateful" <<'FAKE'
+#!/bin/bash
+if [ "$1" = stats ]; then
+	if [ "$(cat "$AUTO_DIR/stateful-cisco")" = connected ]; then
+		printf '    Connection State:            Connected\n'
+		printf '    Session Disconnect:          23 Hours 59 Minutes Remaining\n'
+	else
+		printf '    Connection State:            Disconnected\n'
+	fi
+fi
+FAKE
+cat >"$AUTO_DIR/connect-stateful" <<'FAKE'
+#!/bin/bash
+printf 'attempt\n' >>"$AUTO_DIR/stateful-attempts"
+printf 'connected\n' >"$AUTO_DIR/stateful-cisco"
+FAKE
+chmod +x "$AUTO_DIR/vpn-stateful" "$AUTO_DIR/connect-stateful"
+printf 'disconnected\n' >"$AUTO_DIR/stateful-cisco"
+: >"$AUTO_DIR/stateful-attempts"
+out=$(env VPN_ETA_CONFIG=/dev/null VPN_ETA_AUTO_CONNECT=1 VPN_ETA_HOST=example.invalid \
+	VPN_ETA_USER=demo VPN_ETA_VPN_BIN="$AUTO_DIR/vpn-stateful" \
+	VPN_ETA_AUTO_CONNECT_BIN="$AUTO_DIR/connect-stateful" \
+	VPN_ETA_STATE_DIR="$AUTO_DIR/stateful-state" "$PLUGIN")
+check "scheduled automatic login renders the new connected state" "VPN 23h 59m | color=green" \
+	"$(first_line "$out")"
+check "scheduled automatic login starts only once" "1" \
+	"$(wc -l <"$AUTO_DIR/stateful-attempts" | tr -d ' ')"
+
+# A SwiftBar refresh during the background action shows that work is underway.
+progress_state=$AUTO_DIR/progress-state
+mkdir -p "$progress_state"
+printf '%s\tattempt-started\n' "$(date +%s)" >"$progress_state/auto-attempt"
+out=$(env "${auto_env[@]}" VPN_ETA_STATE_DIR="$progress_state" \
+	VPN_ETA_TEST_PERSIST= VPN_ETA_TEST_STATS="$DISCONNECTED" "$PLUGIN")
+check "an active login replaces the off label" "VPN connecting… | color=orange" \
+	"$(first_line "$out")"
+check "the progress menu names the current stage" "1" \
+	"$(printf '%s\n' "$out" | grep -c 'Automatic sign-in: Contacting Cisco')"
+check "another login cannot be launched while one is in progress" "0" \
+	"$(printf '%s\n' "$out" | grep -c 'param0=start-auto')"
+printf '%s\tcredentials-submitted\n' "$(($(date +%s) - 90))" >"$progress_state/auto-attempt"
+out=$(env "${auto_env[@]}" VPN_ETA_STATE_DIR="$progress_state" \
+	VPN_ETA_TEST_PERSIST= VPN_ETA_TEST_STATS="$DISCONNECTED" "$PLUGIN")
+check "a delayed login is visible instead of appearing stuck" "VPN login delayed… | color=red" \
+	"$(first_line "$out")"
+printf 'manual\n' >"$progress_state/auto-paused"
+out=$(env "${auto_env[@]}" VPN_ETA_STATE_DIR="$progress_state" \
+	VPN_ETA_TEST_PERSIST= VPN_ETA_TEST_STATS="$DISCONNECTED" "$PLUGIN")
+check "a paused login does not keep showing old progress" "VPN off | color=gray" \
+	"$(first_line "$out")"
+rm -f "$progress_state/auto-paused"
+printf '%s\tattempt-started\n' "$(($(date +%s) - 400))" >"$progress_state/auto-attempt"
+out=$(env "${auto_env[@]}" VPN_ETA_STATE_DIR="$progress_state" \
+	VPN_ETA_TEST_PERSIST= VPN_ETA_TEST_STATS="$DISCONNECTED" "$PLUGIN")
+check "an orphaned progress marker eventually expires" "VPN off | color=gray" \
+	"$(first_line "$out")"
 
 # SwiftBar treats an actionless coloured row as selectable. Only the first
 # menu-bar line and rows with an actual action may carry color=.

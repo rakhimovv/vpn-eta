@@ -3,12 +3,12 @@
 # <xbar.title>VPN session ETA</xbar.title>
 # <xbar.desc>Shows the server-reported time remaining in the VPN session.</xbar.desc>
 # <xbar.author>Ruslan Rakhimov</xbar.author>
-# <xbar.version>v1.3.1</xbar.version>
+# <xbar.version>v1.3.2</xbar.version>
 
 # The plugin is COPIED into SwiftBar's folder, so the installed file has no link
 # back to the tag it came from. Without this a bug report can name the macOS,
 # SwiftBar and Cisco versions and still not say which vpn-eta is running.
-VERSION=1.3.1
+VERSION=1.3.2
 
 export PATH="/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin"
 
@@ -152,6 +152,8 @@ AUTO_RETRY_SECONDS=$(number_or "${VPN_ETA_AUTO_RETRY:-300}" 300)
 KEYCHAIN_SERVICE=${VPN_ETA_KEYCHAIN_SERVICE:-vpn-eta}
 KEYCHAIN_TIMEOUT=$(number_or "${VPN_ETA_KEYCHAIN_TIMEOUT:-10}" 10)
 [ "$KEYCHAIN_TIMEOUT" -gt 0 ] || KEYCHAIN_TIMEOUT=10
+AUTO_PROGRESS_EXPECTED_SECONDS=75
+AUTO_PROGRESS_STALE_SECONDS=300
 
 find_vpn() {
 	# Set VPN_ETA_VPN_BIN when the client lives somewhere the two standard paths
@@ -766,6 +768,50 @@ auto_button() {
 	fi
 }
 
+# The action runs without a terminal, so its stage trace is the menu's progress
+# source. A final stage stops this view; an orphaned trace ages out rather than
+# leaving the bar on "connecting" forever.
+load_auto_progress() {
+	[ -r "$AUTO_ATTEMPT_FILE" ] || return 1
+	first_line=$(sed -n '1p' "$AUTO_ATTEMPT_FILE" 2>/dev/null)
+	last_line=$(tail -1 "$AUTO_ATTEMPT_FILE" 2>/dev/null)
+	started=${first_line%%$'\t'*}
+	progress_stage=${last_line#*$'\t'}
+	case $started in '' | *[!0-9]*) return 1 ;; esac
+	case $progress_stage in
+	attempt-started | client-started | preauth-disconnected | username-prompt | password-prompt | \
+	keychain-pin-read | keychain-totp-read | totp-generated | credentials-submitted) ;;
+	*) return 1 ;;
+	esac
+	progress_age=$(( $(now_epoch) - started ))
+	[ "$progress_age" -ge 0 ] && [ "$progress_age" -le "$AUTO_PROGRESS_STALE_SECONDS" ] || return 1
+	case $progress_stage in
+	attempt-started | client-started | preauth-disconnected) progress_detail="Contacting Cisco" ;;
+	username-prompt | password-prompt) progress_detail="Waiting for Cisco's sign-in prompt" ;;
+	keychain-pin-read | keychain-totp-read) progress_detail="Reading Keychain" ;;
+	totp-generated) progress_detail="Preparing the one-time code" ;;
+	credentials-submitted) progress_detail="Waiting for Cisco to confirm" ;;
+	esac
+}
+
+render_auto_progress() {
+	if [ "$progress_age" -le "$AUTO_PROGRESS_EXPECTED_SECONDS" ]; then
+		echo "${BAR_PREFIX}connecting… | color=orange"
+		echo "---"
+		echo "🔑  Automatic sign-in: ${progress_detail} | size=14"
+		echo "Started ${progress_age}s ago | size=11"
+	else
+		echo "${BAR_PREFIX}login delayed… | color=red"
+		echo "---"
+		echo "Automatic sign-in has not reported a result after ${progress_age}s | size=14"
+		echo "Check Cisco Secure Client before trying again | size=11"
+	fi
+	echo "---"
+	history_line
+	refresh_button
+	echo "Refresh countdown for the latest sign-in stage | size=11"
+}
+
 # A history nobody can find is not worth keeping, so the menu says when the
 # session last changed and opens the log on a click.
 history_line() {
@@ -1050,6 +1096,8 @@ auto_connect_session() {
 	umask 077
 	printf '%s\tattempt-started\n' "$now" >"$AUTO_ATTEMPT_FILE" || return 1
 	chmod 600 "$AUTO_ATTEMPT_FILE" || return 1
+	refresh_menu_bar
+	notify "VPN connecting" "Automatic sign-in started; watch for a result notification."
 	if [ -n "${VPN_ETA_AUTO_CONNECT_BIN:-}" ]; then
 		"$VPN_ETA_AUTO_CONNECT_BIN" "$VPN_ETA_HOST" "$VPN_ETA_USER" >/dev/null 2>&1
 		auto_rc=$?
@@ -1061,6 +1109,7 @@ auto_connect_session() {
 		if [ -n "${VPN_ETA_AUTO_CONNECT_BIN:-}" ]; then
 			printf '%s\tclient-connected\n' "$(now_epoch)" >>"$AUTO_ATTEMPT_FILE"
 		fi
+		notify "VPN connected" "Cisco confirmed automatic sign-in."
 		return 0
 	fi
 	case $auto_rc in
@@ -1237,16 +1286,12 @@ fi
 
 if [ "${1-}" = auto-connect ]; then
 	auto_connect_session scheduled
-	auto_rc=$?
-	[ "$auto_rc" -eq 0 ] && refresh_menu_bar
-	exit "$auto_rc"
+	exit $?
 fi
 
 if [ "${1-}" = auto-connect-now ]; then
 	auto_connect_session explicit
-	auto_rc=$?
-	[ "$auto_rc" -eq 0 ] && refresh_menu_bar
-	exit "$auto_rc"
+	exit $?
 fi
 
 if [ "${VPN_ETA_TEST_STATS+x}" = x ]; then
@@ -1278,6 +1323,17 @@ bare_state=$(state_word "$state")
 # reliable than an ETA derived from the uptime of a long-lived daemon — but it
 # is optional, so its absence says nothing about whether the tunnel is up.
 remaining=$(session_remaining "$stats")
+
+if [ -n "$AUTO_CONNECT" ] && [ ! -e "$AUTO_PAUSE_FILE" ] && [ -z "$remaining" ]; then
+	case $bare_state in
+	Disconnected | Connecting | Reconnecting)
+		if load_auto_progress; then
+			render_auto_progress
+			exit 0
+		fi
+		;;
+	esac
+fi
 
 # Cisco between states is not a session ending. A reconnect is the most ordinary
 # thing that happens to a laptop VPN — a Wi-Fi handover is enough — and calling
@@ -1382,10 +1438,12 @@ if [ -z "$remaining" ] && [ "$bare_state" != Connected ]; then
 	fi
 	clear_state
 	if [ "$bare_state" = Disconnected ] && [ -n "$AUTO_CONNECT" ] &&
+		[ "${VPN_ETA_AUTO_RENDER_ONLY:-}" != 1 ] &&
 		[ ! -e "$AUTO_PAUSE_FILE" ] && may_write_state; then
 		if mkdir -p "$STATE_DIR" 2>/dev/null; then
 			# Another scheduled tick may already be connecting.
 			/usr/bin/lockf -t 0 -k "$STATE_DIR/auto.lock" "$0" auto-connect >/dev/null 2>&1 || true
+			VPN_ETA_AUTO_RENDER_ONLY=1 exec "$0"
 		fi
 	fi
 	echo "${BAR_PREFIX}off | color=gray"
