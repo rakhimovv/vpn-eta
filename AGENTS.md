@@ -15,8 +15,7 @@ shellcheck install.sh uninstall.sh docs/make-menu-image.sh \
 
 Both suites green and ShellCheck silent, every time. CI runs exactly those plus `bash -n` /
 `sh -n` over every script (`.github/workflows/tests.yml`). Neither suite needs a VPN,
-SwiftBar or the network: both drive a fake Cisco client inside a `mktemp -d` sandbox. The
-plugin suite takes about fifteen seconds.
+SwiftBar or the network: both drive a fake Cisco client inside a `mktemp -d` sandbox.
 
 `tests/install.test.sh` stubs `osascript` and `open` before running the installer,
 so its restart steps cannot quit the user's SwiftBar. Keep those stubs in place:

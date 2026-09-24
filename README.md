@@ -144,8 +144,9 @@ has a window to print to.
 
 This optional mode starts a new session after Cisco **explicitly reports** `Disconnected`.
 It does not disconnect a live session early, and it does not treat a silent client or a
-`Reconnecting` state as permission to start another login. Attempts are spaced at least
-five minutes apart. If a login fails, automatic connection pauses and sends a notification
+`Reconnecting` state as permission to start another login. Scheduled attempts are spaced at least
+five minutes apart; an explicit Retry starts one attempt immediately. If a login fails,
+automatic connection pauses and sends a notification
 instead of repeatedly trying a potentially bad token. While disconnected, the menu offers
 `🔑 Connect automatically (Keychain)` or `↻ Retry automatic login (Keychain)`; that action
 uses the same guarded login path immediately, even after a pause. It never tears down a
