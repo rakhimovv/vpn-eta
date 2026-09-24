@@ -3,6 +3,16 @@
 Notable changes. Dates are release dates; the format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.3.1] — 2026-09-24
+
+### Fixed
+
+- Cisco can print `Disconnected` while starting a new connection, before asking
+  for credentials. Automatic login now continues through that initial state.
+- The menu offers a direct Keychain login when Cisco confirms a disconnect,
+  alongside the separate manual SMS/TOTP path. Failed attempts record a
+  credential-free stage trace and show the pause reason in the menu.
+
 ## [1.3.0] — 2026-09-24
 
 ### Added

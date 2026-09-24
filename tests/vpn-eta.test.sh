@@ -1079,10 +1079,16 @@ cat >"$AUTO_DIR/vpn" <<'FAKE'
 case $1 in
 stats) printf '    Connection State:            Disconnected\n' ;;
 connect)
-	printf 'Username: '
+	printf '>> state: Unknown\n>> state: Disconnected\n>> state: Disconnected\n>> notice: Ready to connect.\n'
+	printf '>> Please enter your username and password.\n'
+	printf 'Username: [demo] '
 	IFS= read -r user
 	printf 'Password: '
 	IFS= read -r pass
+	if [ "${FAKE_VPN_LOGIN_FAIL:-}" = 1 ]; then
+		printf '>> Login failed.\nUsername: [demo] '
+		exit 2
+	fi
 	if [[ $user = demo && $pass =~ ^12345[0-9]{6}$ ]]; then
 		printf 'success\n' >"$AUTO_DIR/result"
 		printf '>> state: Connected\n'
@@ -1102,6 +1108,55 @@ env "${auto_env[@]}" VPN_ETA_TEST_STATS="$DISCONNECTED" "$PLUGIN" auto-connect >
 check "automatic login answers Cisco from Keychain" "success" "$(cat "$AUTO_DIR/result" 2>/dev/null)"
 check "automatic login keeps credentials out of state" "0" \
 	"$(grep -E -R -l '12345|GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ' "$AUTO_DIR/state" 2>/dev/null | wc -l | tr -d ' ')"
+check "initial Cisco Disconnected does not end the login" "2" \
+	"$(grep -c 'preauth-disconnected' "$AUTO_DIR/state/auto-attempt")"
+check "automatic login records credential submission without values" "1" \
+	"$(grep -c 'credentials-submitted' "$AUTO_DIR/state/auto-attempt")"
+
+printf 'pending\n' >"$AUTO_DIR/result"
+mkdir -p "$AUTO_DIR/explicit-state"
+printf 'login-rejected\n' >"$AUTO_DIR/explicit-state/auto-paused"
+date +%s >"$AUTO_DIR/explicit-state/auto-retry"
+env "${auto_env[@]}" VPN_ETA_STATE_DIR="$AUTO_DIR/explicit-state" \
+	VPN_ETA_TEST_STATS="$DISCONNECTED" "$PLUGIN" start-auto >/dev/null
+check "the explicit automatic action retries through Keychain" "success" "$(cat "$AUTO_DIR/result")"
+check "the explicit automatic action remains enabled after success" "false" \
+	"$([ -e "$AUTO_DIR/explicit-state/auto-paused" ] && echo true || echo false)"
+check "the diagnostic trace is private" "600" \
+	"$(stat -f '%OLp' "$AUTO_DIR/explicit-state/auto-attempt")"
+
+: >"$AUTO_DIR/guard-attempts"
+cat >"$AUTO_DIR/guard-connect" <<'FAKE'
+#!/bin/bash
+printf 'attempt\n' >>"$AUTO_DIR/guard-attempts"
+FAKE
+chmod +x "$AUTO_DIR/guard-connect"
+env "${auto_env[@]}" VPN_ETA_STATE_DIR="$AUTO_DIR/guard-state" \
+	VPN_ETA_AUTO_CONNECT_BIN="$AUTO_DIR/guard-connect" VPN_ETA_TEST_STATS="$CONNECTED" \
+	"$PLUGIN" start-auto >/dev/null
+check "explicit automatic login does not replace a connected session" "0" \
+	"$(wc -l <"$AUTO_DIR/guard-attempts" | tr -d ' ')"
+env "${auto_env[@]}" VPN_ETA_STATE_DIR="$AUTO_DIR/guard-state" \
+	VPN_ETA_AUTO_CONNECT_BIN="$AUTO_DIR/guard-connect" \
+	VPN_ETA_TEST_STATS='    Connection State:            Reconnecting' \
+	"$PLUGIN" start-auto >/dev/null
+check "explicit automatic login does not interrupt reconnection" "0" \
+	"$(wc -l <"$AUTO_DIR/guard-attempts" | tr -d ' ')"
+env "${auto_env[@]}" VPN_ETA_STATE_DIR="$AUTO_DIR/guard-state" \
+	VPN_ETA_AUTO_CONNECT_BIN="$AUTO_DIR/guard-connect" \
+	VPN_ETA_TEST_STATS='    Connection State:            Unknown' \
+	"$PLUGIN" start-auto >/dev/null
+check "explicit automatic login refuses unknown Cisco state" "0" \
+	"$(wc -l <"$AUTO_DIR/guard-attempts" | tr -d ' ')"
+
+env "${auto_env[@]}" VPN_ETA_STATE_DIR="$AUTO_DIR/reject-state" \
+	FAKE_VPN_LOGIN_FAIL=1 VPN_ETA_TEST_STATS="$DISCONNECTED" \
+	"$PLUGIN" start-auto >/dev/null
+check "Cisco login rejection has a specific pause reason" "login-rejected" \
+	"$(cat "$AUTO_DIR/reject-state/auto-paused" 2>/dev/null)"
+check "the failed attempt records its final phase" "1" \
+	"$(grep -c 'failed-login-rejected' "$AUTO_DIR/reject-state/auto-attempt")"
+
 cat >"$AUTO_DIR/security-lab" <<'FAKE'
 #!/bin/bash
 case $* in
@@ -1162,16 +1217,26 @@ env "${auto_env[@]}" VPN_ETA_AUTO_CONNECT_BIN="$AUTO_DIR/connect" \
 	VPN_ETA_TEST_STATS="$DISCONNECTED" "$PLUGIN" >/dev/null
 check "resume allows automatic login" "2" "$(wc -l <"$AUTO_DIR/attempts" | tr -d ' ')"
 out=$(env "${auto_env[@]}" VPN_ETA_TEST_STATS="$DISCONNECTED" "$PLUGIN")
-check "automatic mode offers a pause control" "1" \
-	"$(printf '%s\n' "$out" | grep -c 'param0=pause-auto')"
+check "confirmed disconnect offers automatic Keychain login" "1" \
+	"$(printf '%s\n' "$out" | grep -c 'Connect automatically (Keychain).*param0=start-auto')"
+out=$(env "${auto_env[@]}" VPN_ETA_TEST_PERSIST= VPN_ETA_TEST_STATS="$CONNECTED" "$PLUGIN")
+check "connected menu has no automatic teardown action" "0" \
+	"$(printf '%s\n' "$out" | grep -c 'param0=start-auto')"
+out=$(env "${auto_env[@]}" VPN_ETA_TEST_PERSIST= VPN_ETA_TEST_STATS="$NOT_ATTACHED" "$PLUGIN")
+check "unreadable Cisco state has no automatic start action" "0" \
+	"$(printf '%s\n' "$out" | grep -c 'param0=start-auto')"
+out=$(env "${auto_env[@]}" VPN_ETA_TEST_PERSIST= \
+	VPN_ETA_TEST_STATS='    Connection State:            Unknown' "$PLUGIN")
+check "unknown Cisco state has no automatic start action" "0" \
+	"$(printf '%s\n' "$out" | grep -c 'param0=start-auto')"
 printf 'connected\n' >"$FAKE_DIR/state"
 env VPN_ETA_CONFIG=/dev/null VPN_ETA_AUTO_CONNECT=1 VPN_ETA_STATE_DIR="$AUTO_DIR/state" \
 	VPN_ETA_VPN_BIN="$FAKE_DIR/vpn" "$PLUGIN" disconnect >/dev/null
 check "manual disconnect pauses automatic connection" "true" \
 	"$([ -e "$AUTO_DIR/state/auto-paused" ] && echo true || echo false)"
 out=$(env "${auto_env[@]}" VPN_ETA_TEST_STATS="$DISCONNECTED" "$PLUGIN")
-check "paused mode offers a resume control" "1" \
-	"$(printf '%s\n' "$out" | grep -c 'param0=resume-auto')"
+check "paused disconnect offers an explicit retry" "1" \
+	"$(printf '%s\n' "$out" | grep -c 'Retry automatic login (Keychain).*param0=start-auto')"
 check "manual SMS or TOTP fallback remains available" "1" \
 	"$(printf '%s\n' "$out" | grep -c 'Start manually (SMS or TOTP)')"
 printf 'disconnected\n' >"$FAKE_DIR/state"
@@ -1180,6 +1245,8 @@ env VPN_ETA_CONFIG=/dev/null VPN_ETA_AUTO_CONNECT=1 VPN_ETA_STATE_DIR="$AUTO_DIR
 	VPN_ETA_CONNECT_ATTEMPTS=1 VPN_ETA_CONNECT_SLEEP=0 "$PLUGIN" start >/dev/null
 check "manual fallback leaves automatic connection paused" "true" \
 	"$([ -e "$AUTO_DIR/state/auto-paused" ] && echo true || echo false)"
+check "manual fallback records its pause reason" "manual" \
+	"$(cat "$AUTO_DIR/state/auto-paused")"
 cat >"$AUTO_DIR/fail-connect" <<'FAKE'
 #!/bin/bash
 exit 1

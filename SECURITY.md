@@ -20,7 +20,8 @@ reproduction is more useful anyway.
   the terminal SwiftBar opens. Optional automatic reconnection reads a token PIN and
   TOTP key from macOS Keychain, then sends the current combined code to Cisco when it
   asks for a password. The PIN and key do not enter command arguments, config, state or
-  history files. This mode must be enabled explicitly.
+  history files. The `auto-attempt` file records only stage names and timestamps.
+  This mode must be enabled explicitly.
 - **It runs no privileged commands.** No `sudo`, no setuid, no launch daemon.
 - **It makes no network calls of its own.** The only thing that talks to your gateway is
   Cisco's client.

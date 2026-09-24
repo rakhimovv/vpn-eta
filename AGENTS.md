@@ -92,10 +92,13 @@ notified), `last-event` (the dedupe key that makes a per-minute plugin log one l
 not raise an alarm), and `muted-until` (an epoch, so the silence lifts itself rather than
 waiting to be remembered).
 
-Automatic reconnection adds `auto-retry`, `auto-paused` and a retained `auto.lock`.
+Automatic reconnection adds `auto-retry`, `auto-paused`, a retained `auto.lock`,
+and a single overwritten `auto-attempt` stage trace (no credentials).
 It runs only after an explicit Cisco `Disconnected`, under `lockf`, and a failed
 login pauses further attempts. Manual Start and Disconnect also pause it, so an
 SMS fallback or intentional teardown cannot race the next scheduled tick.
+The `start-auto` menu action takes the same lock, rechecks Cisco's state, then
+clears pause/retry inside the lock before a single Keychain login attempt.
 
 Both of those last two are deadlines that suppress a notification, and neither suppresses a
 *log line* — the history is what an unexplained drop is reconstructed from later, and it is

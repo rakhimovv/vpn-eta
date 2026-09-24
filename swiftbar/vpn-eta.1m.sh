@@ -3,12 +3,12 @@
 # <xbar.title>VPN session ETA</xbar.title>
 # <xbar.desc>Shows the server-reported time remaining in the VPN session.</xbar.desc>
 # <xbar.author>Ruslan Rakhimov</xbar.author>
-# <xbar.version>v1.3.0</xbar.version>
+# <xbar.version>v1.3.1</xbar.version>
 
 # The plugin is COPIED into SwiftBar's folder, so the installed file has no link
 # back to the tag it came from. Without this a bug report can name the macOS,
 # SwiftBar and Cisco versions and still not say which vpn-eta is running.
-VERSION=1.3.0
+VERSION=1.3.1
 
 export PATH="/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin"
 
@@ -66,6 +66,7 @@ MUTE_FILE=$STATE_DIR/muted-until
 INCIDENT_DIR=$STATE_DIR/incidents
 AUTO_RETRY_FILE=$STATE_DIR/auto-retry
 AUTO_PAUSE_FILE=$STATE_DIR/auto-paused
+AUTO_ATTEMPT_FILE=$STATE_DIR/auto-attempt
 
 # What the menu bar says in front of the countdown. Two menu-bar items showing
 # "VPN" tell you nothing, so a second gateway can be labelled "Work" or "Lab".
@@ -740,9 +741,28 @@ auto_button() {
 		echo "Automatic connection needs VPN_ETA_HOST and VPN_ETA_USER | size=11"
 	fi
 	if [ -e "$AUTO_PAUSE_FILE" ]; then
-		echo "▶  Resume automatic connection | bash=$0 param0=resume-auto terminal=false refresh=true"
+		pause_reason=$(cat "$AUTO_PAUSE_FILE" 2>/dev/null)
+		case $pause_reason in
+		login-rejected) echo "Automatic sign-in paused: Cisco rejected the login | size=11" ;;
+		keychain-pin | keychain-totp) echo "Automatic sign-in paused: Keychain could not be read | size=11" ;;
+		totp-invalid) echo "Automatic sign-in paused: TOTP key could not be used | size=11" ;;
+		configuration) echo "Automatic sign-in paused: settings are incomplete | size=11" ;;
+		manual) echo "Automatic reconnection paused after manual action | size=11" ;;
+		*) echo "Automatic sign-in paused after an unsuccessful attempt | size=11" ;;
+		esac
+	fi
+	if [ "${1-}" = confirmed-disconnected ]; then
+		if [ -e "$AUTO_PAUSE_FILE" ]; then
+			echo "↻  Retry automatic login (Keychain) | bash=$0 param0=start-auto terminal=false refresh=true"
+		else
+			echo "🔑  Connect automatically (Keychain) | bash=$0 param0=start-auto terminal=false refresh=true"
+		fi
+		return 0
+	fi
+	if [ -e "$AUTO_PAUSE_FILE" ]; then
+		echo "▶  Resume automatic reconnection | bash=$0 param0=resume-auto terminal=false refresh=true"
 	else
-		echo "⏸  Pause automatic connection | bash=$0 param0=pause-auto terminal=false refresh=true"
+		echo "⏸  Pause automatic reconnection | bash=$0 param0=pause-auto terminal=false refresh=true"
 	fi
 }
 
@@ -780,7 +800,7 @@ menu_actions() {
 	history_line
 	refresh_button
 	mute_button
-	auto_button
+	auto_button "$2"
 	echo "---"
 	start_button "$1"
 	if [ "${1-}" = active ]; then
@@ -870,7 +890,7 @@ start_new_session() {
 	fi
 
 	if [ -n "$AUTO_CONNECT" ]; then
-		mkdir -p "$STATE_DIR" 2>/dev/null && : >"$AUTO_PAUSE_FILE"
+		mkdir -p "$STATE_DIR" 2>/dev/null && printf 'manual\n' >"$AUTO_PAUSE_FILE"
 	fi
 
 	# The drop that follows is this plugin's doing, so it must not surface as a
@@ -925,22 +945,42 @@ auto_login() {
 		VPN_ETA_AUTO_USER=$VPN_ETA_USER \
 		VPN_ETA_AUTO_KEYCHAIN=$KEYCHAIN_SERVICE \
 		VPN_ETA_AUTO_KEYCHAIN_TIMEOUT=$KEYCHAIN_TIMEOUT \
+		VPN_ETA_AUTO_TRACE=$AUTO_ATTEMPT_FILE \
 		VPN_ETA_AUTO_SECURITY=${VPN_ETA_SECURITY_BIN:-/usr/bin/security} \
 		/usr/bin/expect <<'EXPECT'
 log_user 0
 set timeout 45
 set answered 0
+proc trace_stage {stage} {
+	catch {
+		set trace_file [open $::env(VPN_ETA_AUTO_TRACE) a]
+		puts $trace_file "[clock seconds]\t$stage"
+		close $trace_file
+	}
+}
+trace_stage client-started
 spawn -noecho $env(VPN_ETA_AUTO_VPN) connect $env(VPN_ETA_AUTO_HOST)
 expect {
+	-re {([Aa]uthentication [Ff]ailed|[Ll]ogin [Ff]ailed)} { trace_stage login-rejected; exit 13 }
+	-re {[Ss]tate:[ \t]*[Cc]onnected} { trace_stage client-connected; exit 0 }
+	-re {[Ss]tate:[ \t]*[Dd]isconnected} {
+		if {$answered} { trace_stage client-disconnected; exit 14 }
+		trace_stage preauth-disconnected
+		exp_continue -continue_timer
+	}
 	-re {[Uu]sername[ \t]*:} {
+		trace_stage username-prompt
 		send -- "$env(VPN_ETA_AUTO_USER)\r"
 		exp_continue -continue_timer
 	}
 	-re {[Pp]assword[ \t]*:} {
-		if {$answered} { exit 1 }
+		if {$answered} { trace_stage repeated-password-prompt; exit 17 }
 		set answered 1
-		if {[catch {exec /usr/bin/perl -e {alarm shift @ARGV; exec @ARGV} $env(VPN_ETA_AUTO_KEYCHAIN_TIMEOUT) $env(VPN_ETA_AUTO_SECURITY) find-generic-password -a $env(VPN_ETA_AUTO_USER) -s "$env(VPN_ETA_AUTO_KEYCHAIN)-pin" -w} pin]} { exit 1 }
-		if {[catch {exec /usr/bin/perl -e {alarm shift @ARGV; exec @ARGV} $env(VPN_ETA_AUTO_KEYCHAIN_TIMEOUT) $env(VPN_ETA_AUTO_SECURITY) find-generic-password -a $env(VPN_ETA_AUTO_USER) -s "$env(VPN_ETA_AUTO_KEYCHAIN)-totp" -w} seed]} { exit 1 }
+		trace_stage password-prompt
+		if {[catch {exec /usr/bin/perl -e {alarm shift @ARGV; exec @ARGV} $env(VPN_ETA_AUTO_KEYCHAIN_TIMEOUT) $env(VPN_ETA_AUTO_SECURITY) find-generic-password -a $env(VPN_ETA_AUTO_USER) -s "$env(VPN_ETA_AUTO_KEYCHAIN)-pin" -w} pin]} { trace_stage keychain-pin-failed; exit 10 }
+		trace_stage keychain-pin-read
+		if {[catch {exec /usr/bin/perl -e {alarm shift @ARGV; exec @ARGV} $env(VPN_ETA_AUTO_KEYCHAIN_TIMEOUT) $env(VPN_ETA_AUTO_SECURITY) find-generic-password -a $env(VPN_ETA_AUTO_USER) -s "$env(VPN_ETA_AUTO_KEYCHAIN)-totp" -w} seed]} { trace_stage keychain-totp-failed; exit 11 }
+		trace_stage keychain-totp-read
 		if {[catch {exec /usr/bin/perl -MDigest::SHA=hmac_sha1 -e {
 			my $seed = <STDIN>;
 			$seed = uc($seed);
@@ -952,49 +992,90 @@ expect {
 			my $digest = hmac_sha1(pack("Q>", int(time / 30)), $key);
 			my $offset = ord(substr($digest, -1)) & 15;
 			printf "%06d", (unpack("N", substr($digest, $offset, 4)) & 0x7fffffff) % 1000000;
-		} << $seed} code]} { exit 1 }
+		} << $seed} code]} { trace_stage totp-invalid; exit 12 }
+		trace_stage totp-generated
 		send -- "${pin}${code}\r"
+		trace_stage credentials-submitted
 		exp_continue -continue_timer
 	}
-	-re {[Ss]tate:[ \t]*[Cc]onnected} { exit 0 }
-	-re {([Aa]uthentication failed|[Ll]ogin failed|[Ss]tate:[ \t]*[Dd]isconnected)} { exit 1 }
-	eof { exit 1 }
-	timeout { exit 1 }
+	eof { trace_stage client-exited; exit 16 }
+	timeout { trace_stage timeout; exit 15 }
 }
 EXPECT
 }
 
 auto_connect_session() {
-	[ -n "$AUTO_CONNECT" ] && [ ! -e "$AUTO_PAUSE_FILE" ] || return 0
+	mode=${1:-scheduled}
+	[ -n "$AUTO_CONNECT" ] || return 1
+	if [ "$mode" = scheduled ] && [ -e "$AUTO_PAUSE_FILE" ]; then return 0; fi
 	may_write_state || return 0
 	mkdir -p "$STATE_DIR" 2>/dev/null || return 1
 	if [ -z "${VPN_ETA_HOST:-}" ] || [ -z "${VPN_ETA_USER:-}" ]; then
-		: >"$AUTO_PAUSE_FILE"
+		printf 'configuration\n' >"$AUTO_PAUSE_FILE"
 		notify "VPN automatic login paused" \
 			"Set VPN_ETA_HOST and VPN_ETA_USER before resuming automatic connection."
 		return 1
+	fi
+	if ! find_vpn; then
+		[ "$mode" != explicit ] || notify "VPN automatic login did not start" "Cisco Secure Client not found."
+		return 1
+	fi
+	# Recheck inside the lock: a menu click can outlive the state that drew it.
+	if [ "${VPN_ETA_TEST_STATS+x}" = x ]; then
+		stats=$VPN_ETA_TEST_STATS
+		if ! stats_is_readable "$stats"; then
+			[ "$mode" != explicit ] || notify "VPN automatic login did not start" "Cisco state could not be read."
+			return 1
+		fi
+	else
+		if ! read_stats; then
+			[ "$mode" != explicit ] || notify "VPN automatic login did not start" "Cisco state could not be read."
+			return 1
+		fi
+	fi
+	if [ "$(state_word "$(connection_state "$stats")")" != Disconnected ]; then
+		[ "$mode" = scheduled ] && return 0
+		notify "VPN automatic login did not start" "Cisco is no longer Disconnected; no credentials were sent."
+		return 1
+	fi
+	if [ "$mode" = explicit ]; then
+		rm -f "$AUTO_PAUSE_FILE" "$AUTO_RETRY_FILE"
 	fi
 	now=$(now_epoch)
 	last=$(cat "$AUTO_RETRY_FILE" 2>/dev/null)
 	case $last in '' | *[!0-9]*) last=0 ;; esac
 	[ $((now - last)) -ge "$AUTO_RETRY_SECONDS" ] || return 0
-	if ! find_vpn; then return 1; fi
-	# The scheduled render may have seen Disconnected just as another client
-	# started connecting. Recheck under the lock before opening a new session.
-	if [ "${VPN_ETA_TEST_STATS+x}" != x ]; then
-		read_stats || return 1
-		[ "$(state_word "$(connection_state "$stats")")" = Disconnected ] || return 0
-	fi
 	printf '%s\n' "$now" >"$AUTO_RETRY_FILE" || return 1
 	[ ! -e "$AUTO_PAUSE_FILE" ] || return 0
+	umask 077
+	printf '%s\tattempt-started\n' "$now" >"$AUTO_ATTEMPT_FILE" || return 1
+	chmod 600 "$AUTO_ATTEMPT_FILE" || return 1
 	if [ -n "${VPN_ETA_AUTO_CONNECT_BIN:-}" ]; then
-		"$VPN_ETA_AUTO_CONNECT_BIN" "$VPN_ETA_HOST" "$VPN_ETA_USER" >/dev/null 2>&1 && return 0
+		"$VPN_ETA_AUTO_CONNECT_BIN" "$VPN_ETA_HOST" "$VPN_ETA_USER" >/dev/null 2>&1
+		auto_rc=$?
 	else
-		auto_login >/dev/null 2>&1 && return 0
+		auto_login >/dev/null 2>&1
+		auto_rc=$?
 	fi
-	: >"$AUTO_PAUSE_FILE"
+	if [ "$auto_rc" -eq 0 ]; then
+		printf '%s\tclient-connected\n' "$(now_epoch)" >>"$AUTO_ATTEMPT_FILE"
+		return 0
+	fi
+	case $auto_rc in
+	10) pause_reason=keychain-pin ;;
+	11) pause_reason=keychain-totp ;;
+	12) pause_reason=totp-invalid ;;
+	13) pause_reason=login-rejected ;;
+	14) pause_reason=client-disconnected ;;
+	15) pause_reason=timeout ;;
+	16) pause_reason=client-exited ;;
+	17) pause_reason=repeated-password ;;
+	*) pause_reason=failed ;;
+	esac
+	printf '%s\n' "$pause_reason" >"$AUTO_PAUSE_FILE"
+	printf '%s\tfailed-%s\n' "$(now_epoch)" "$pause_reason" >>"$AUTO_ATTEMPT_FILE"
 	notify "VPN automatic login paused" \
-		"Cisco did not establish a session. Use manual SMS or TOTP login, then resume automatic connection."
+		"Automatic sign-in stopped at ${pause_reason}. Use manual SMS or TOTP login if needed."
 	return 1
 }
 
@@ -1019,7 +1100,7 @@ disconnect_session() {
 		return 1
 	fi
 	if [ -n "$AUTO_CONNECT" ]; then
-		mkdir -p "$STATE_DIR" 2>/dev/null && : >"$AUTO_PAUSE_FILE"
+		mkdir -p "$STATE_DIR" 2>/dev/null && printf 'manual\n' >"$AUTO_PAUSE_FILE"
 	fi
 	# Only now: a failed disconnect leaves the session running, and with it the
 	# deadline that the next unreadable reply will want to extrapolate from.
@@ -1129,10 +1210,19 @@ fi
 
 if [ "${1-}" = pause-auto ]; then
 	if [ -n "$AUTO_CONNECT" ] && may_write_state; then
-		mkdir -p "$STATE_DIR" 2>/dev/null && : >"$AUTO_PAUSE_FILE"
+		mkdir -p "$STATE_DIR" 2>/dev/null && printf 'manual\n' >"$AUTO_PAUSE_FILE"
 	fi
 	refresh_menu_bar
 	exit 0
+fi
+
+if [ "${1-}" = start-auto ]; then
+	if [ -z "$AUTO_CONNECT" ] || ! may_write_state; then exit 1; fi
+	mkdir -p "$STATE_DIR" 2>/dev/null || exit 1
+	/usr/bin/lockf -t 0 -k "$STATE_DIR/auto.lock" "$0" auto-connect-now
+	auto_rc=$?
+	refresh_menu_bar
+	exit "$auto_rc"
 fi
 
 if [ "${1-}" = resume-auto ]; then
@@ -1144,7 +1234,14 @@ if [ "${1-}" = resume-auto ]; then
 fi
 
 if [ "${1-}" = auto-connect ]; then
-	auto_connect_session
+	auto_connect_session scheduled
+	auto_rc=$?
+	[ "$auto_rc" -eq 0 ] && refresh_menu_bar
+	exit "$auto_rc"
+fi
+
+if [ "${1-}" = auto-connect-now ]; then
+	auto_connect_session explicit
 	auto_rc=$?
 	[ "$auto_rc" -eq 0 ] && refresh_menu_bar
 	exit "$auto_rc"
@@ -1293,7 +1390,11 @@ if [ -z "$remaining" ] && [ "$bare_state" != Connected ]; then
 	echo "---"
 	echo "${state:-Disconnected}"
 	echo "---"
-	menu_actions disconnected
+	if [ "$bare_state" = Disconnected ]; then
+		menu_actions disconnected confirmed-disconnected
+	else
+		menu_actions disconnected
+	fi
 	exit 0
 fi
 

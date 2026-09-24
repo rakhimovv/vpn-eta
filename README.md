@@ -146,12 +146,15 @@ This optional mode starts a new session after Cisco **explicitly reports** `Disc
 It does not disconnect a live session early, and it does not treat a silent client or a
 `Reconnecting` state as permission to start another login. Attempts are spaced at least
 five minutes apart. If a login fails, automatic connection pauses and sends a notification
-instead of repeatedly trying a potentially bad token. Use `▶ Resume automatic connection`
-in the menu to allow it again. Choosing `⛔ Disconnect` also pauses it.
-The `🔑 Start manually (SMS or TOTP)…` item stays available. It opens Cisco's
+instead of repeatedly trying a potentially bad token. While disconnected, the menu offers
+`🔑 Connect automatically (Keychain)` or `↻ Retry automatic login (Keychain)`; that action
+uses the same guarded login path immediately, even after a pause. It never tears down a
+connected or reconnecting session. While connected, `▶ Resume automatic reconnection`
+only arms future attempts. Choosing `⛔ Disconnect` pauses automatic reconnection.
+The separate `🔑 Start manually (SMS or TOTP)…` item opens Cisco's
 normal sign-in, so SMS remains a fallback if the saved TOTP token or automatic
-login fails. SMS codes still need to be entered by hand. Choosing manual login
-pauses automatic connection until you resume it from the menu.
+login fails. It does not read Keychain; SMS codes still need to be entered by hand.
+Choosing manual login pauses automatic reconnection until you resume it from the menu.
 
 It uses the PIN and **secret key** of your VPN TOTP token. The secret key is the long value
 you added to KeePassXC, not the six-digit code that changes every 30 seconds.
@@ -188,6 +191,10 @@ only if that local access trade-off is acceptable to you. If Cisco changes its l
 prompts, automatic login fails closed; you can still use `🔑 Start manually (SMS or TOTP)…`.
 The automatic path has been tested against a simulated Cisco prompt, not a live
 gateway. Verify one real reconnection before relying on it for unattended work.
+The latest attempt's non-secret stages are kept in `auto-attempt` beside `history.log`
+(mode `0600`); they show whether Cisco reached the username prompt, Keychain was read,
+and the client accepted or rejected the login. The menu shows the pause reason after
+an unsuccessful attempt. Neither file contains the PIN, TOTP key or generated code.
 
 ## Notifications and the log
 
