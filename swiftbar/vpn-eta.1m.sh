@@ -1164,6 +1164,10 @@ disconnect_session() {
 # long as the tunnel the client reported is still bound.
 render_unreadable() {
 	detail=$1
+	if [ -n "$AUTO_CONNECT" ] && [ ! -e "$AUTO_PAUSE_FILE" ] && load_auto_progress; then
+		render_auto_progress
+		return 0
+	fi
 	# Which actions the foot of the menu may offer. Only the first branch below
 	# has evidence of a session: the address the client last reported is still
 	# bound to a utun, which is what "there is something to end" means when the

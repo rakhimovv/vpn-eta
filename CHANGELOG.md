@@ -11,7 +11,8 @@ Notable changes. Dates are release dates; the format follows
   connection. While it runs, the menu bar shows `VPN connecting…` and the menu
   shows its latest recorded stage and elapsed time. After 75 seconds without a
   result, the bar says `login delayed…`; an orphaned marker expires after five
-  minutes instead of looking active forever.
+  minutes instead of looking active forever. Progress remains visible while
+  Cisco's `stats` reply is unreadable during sign-in.
 
 ## [1.3.1] — 2026-09-24
 

@@ -1318,6 +1318,10 @@ check "the progress menu names the current stage" "1" \
 	"$(printf '%s\n' "$out" | grep -c 'Automatic sign-in: Contacting Cisco')"
 check "another login cannot be launched while one is in progress" "0" \
 	"$(printf '%s\n' "$out" | grep -c 'param0=start-auto')"
+out=$(env "${auto_env[@]}" VPN_ETA_STATE_DIR="$progress_state" \
+	VPN_ETA_TEST_PERSIST= VPN_ETA_TEST_STATS="$NOT_ATTACHED" "$PLUGIN")
+check "a silent Cisco read still shows automatic-login progress" "VPN connecting… | color=orange" \
+	"$(first_line "$out")"
 printf '%s\tcredentials-submitted\n' "$(($(date +%s) - 90))" >"$progress_state/auto-attempt"
 out=$(env "${auto_env[@]}" VPN_ETA_STATE_DIR="$progress_state" \
 	VPN_ETA_TEST_PERSIST= VPN_ETA_TEST_STATS="$DISCONNECTED" "$PLUGIN")

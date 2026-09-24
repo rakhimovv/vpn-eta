@@ -154,7 +154,8 @@ connected or reconnecting session. While connected, `▶ Resume automatic reconn
 only arms future attempts. Choosing `⛔ Disconnect` pauses automatic reconnection.
 At the start of an automatic attempt, SwiftBar sends a `VPN connecting` notification
 and the menu bar shows `VPN connecting…`. `Refresh countdown` reads the latest
-recorded stage and seconds elapsed. A successful sign-in sends a
+recorded stage and seconds elapsed, even if Cisco temporarily cannot return
+session statistics. A successful sign-in sends a
 `VPN connected` notification; a failed one names the reason and pauses retries.
 After 75 seconds without a result, the bar says `login delayed…` rather than
 silently looking idle. A progress marker older than five minutes expires.
