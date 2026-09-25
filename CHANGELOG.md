@@ -3,6 +3,26 @@
 Notable changes. Dates are release dates; the format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.5.0] — 2026-09-25
+
+### Changed
+
+- The shield's colour now follows the connection's state only. A confirmed
+  session stays neutral however little time is left; amber means the
+  connection is changing or unconfirmed, and red means it is stuck, sign-in is
+  delayed, or Cisco is missing. `VPN_ETA_CRITICAL_MINUTES` and
+  `VPN_ETA_WARN_MINUTES` are gone, and the 60/15 notifications are unchanged.
+- The connected menu leads with `Connected`, then the remaining time. When
+  Cisco reports the session expiring and automatic reconnection is on, the
+  menu says it will sign in again.
+
+### Fixed
+
+- When a session expired, the last countdown (`1m`) stayed on the bar for as
+  long as the automatic sign-in took. The scheduled sign-in now runs in the
+  background: the bar switches to `connecting…` straight away and refreshes as
+  soon as Cisco answers.
+
 ## [1.4.0] — 2026-09-24
 
 ### Added

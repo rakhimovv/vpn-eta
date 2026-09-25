@@ -64,10 +64,13 @@ The menu bar holds one outline shield with no mark inside. Its colour changes wi
 
 | Shield colour | Means |
 |---|---|
-| Neutral | Connected. The menu shows the precise remaining time and whether it is estimated. |
-| Amber | Less than an hour remains, the connection is changing, or Cisco cannot confirm its state. Open the menu for details. |
+| Neutral | Connected, as Cisco reports it — however little time is left. The menu shows the remaining time and whether it is estimated. |
+| Amber | The connection is changing (connecting, reconnecting, automatic sign-in), or Cisco cannot confirm its state. Open the menu for details. |
 | Grey | A reported disconnect, or no session *and* no tunnel. |
-| Red | Less than fifteen minutes remain, a transition is stuck, login is delayed, or Cisco is missing. Open the menu for the reason. |
+| Red | A transition is stuck, sign-in is delayed, or Cisco is missing. Open the menu for the reason. |
+
+The colour follows the state, never the clock. How close the deadline is lives in the menu
+and in the `VPN_ETA_NOTIFY_MARKS` notifications.
 
 The installer adds a per-user watcher that requests a fresh Cisco read after a macOS network change.
 The plugin also refreshes once a minute — the `1m` in the filename — for quiet changes.
@@ -97,8 +100,6 @@ reads no `~/.zshrc`. A variable exported there reaches a terminal run and never 
 | `VPN_ETA_BAR_MODE` | `icon` | Set `countdown` to show the older text menu-bar item. |
 | `VPN_ETA_LABEL` | `VPN` | Prefix for the optional text countdown. `""` removes it. |
 | `VPN_ETA_COMPACT` | unset | In text mode, drop minutes while over an hour is left. Rounds down. |
-| `VPN_ETA_CRITICAL_MINUTES` | `15` | Shield turns red at or below this. |
-| `VPN_ETA_WARN_MINUTES` | `60` | Shield turns amber at or below this. |
 | `VPN_ETA_NOTIFY_MARKS` | `60 15` | Minutes left that raise a notification. `""` switches them off. |
 | `VPN_ETA_MUTE_MINUTES` | `60` | How long one click of `🔕 Mute alerts` lasts. `0` removes the item. |
 | `VPN_ETA_STATE_DIR` | SwiftBar's per-plugin data dir | Where the state file and `history.log` live. |

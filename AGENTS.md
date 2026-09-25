@@ -75,7 +75,8 @@ deadline forward instead of clearing it; a Wi-Fi handover is not a session endin
 
 Carried is not confirmed, and the menu bar says which: the shield turns amber,
 then red once one transition has run past `VPN_ETA_TRANSITION_LIMIT`
-minutes — or once the carried countdown is itself critical, which outranks it. The optional
+minutes. Colour never follows the minutes left — a healthy session near its deadline stays
+neutral, and the countdown is the dropdown's and the notifications' job. The optional
 text view marks the carried number with an ellipsis. The whole clock
 rides in `record_event`'s dedupe identity (`transition|<start epoch>[ stuck]`): the identity holds
 for as long as one transition lasts, so its start survives every tick without a sixth state file,
@@ -107,6 +108,19 @@ ages them against its first timestamp; an old trace cannot hold the bar on
 `connecting` forever. A refresh at attempt start makes progress visible before
 Cisco returns, including when `stats` is unreadable, and the action refreshes
 again on completion.
+The scheduled attempt is launched **detached** from the tick that saw
+`Disconnected`: SwiftBar shows nothing new until a run exits, and a tick that
+waited for the login kept the expired session's last countdown on the bar for
+the whole sign-in. That tick renders `connecting…` itself (only when the retry
+backoff lets an attempt start), and the detached attempt refreshes the plugin
+when it finishes, success or pause.
+No plugin change reaches an **open** dropdown: SwiftBar does not process a
+`refreshplugin` URL while its menu is being tracked. Measured at the 2026-09-25
+03:21 expiry: eight refresh URLs opened between 03:21:15 and 03:21:34 were
+logged by SwiftBar as one burst only after a menu-item click closed the menu,
+so the open menu kept showing `1m remaining` over a session already renewed.
+Check SwiftBar's own log (`perform action for menu item`) before blaming a
+render path for a stale menu.
 
 Both of those last two are deadlines that suppress a notification, and neither suppresses a
 *log line* — the history is what an unexplained drop is reconstructed from later, and it is
@@ -151,6 +165,7 @@ make a test pass.
 | `VPN_ETA_LOG_BIN` | a fake `/usr/bin/log` — the only way to test the incident capture |
 | `VPN_ETA_SECURITY_BIN` | a fake `security` command for automatic-login fixtures |
 | `VPN_ETA_AUTO_CONNECT_BIN` | a fake automatic connector for retry and pause fixtures |
+| `VPN_ETA_TEST_AUTO_WAIT` | makes a tick wait for the detached scheduled login it launched |
 | `VPN_ETA_CONFIG` | the config file to source (`/dev/null` for documented defaults) |
 
 ## Adding a setting

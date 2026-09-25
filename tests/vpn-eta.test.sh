@@ -106,7 +106,7 @@ critical_line=$(VPN_ETA_BAR_MODE=icon VPN_ETA_TEST_STATS='    Connection State: 
     Session Disconnect:          11 Minutes Remaining' "$PLUGIN" | head -1)
 critical_icon=${critical_line#*image=}
 critical_icon=${critical_icon%%,*}
-check "critical time changes shield colour" "false" \
+check "minutes left do not change the shield colour" "true" \
 	"$([ "$connected_icon" = "$critical_icon" ] && echo true || echo false)"
 icon_state=$STATE_DIR/icon-estimate
 mkdir -p "$icon_state"
@@ -123,11 +123,11 @@ check "an estimated deadline changes shield colour" "false" \
 
 out=$(VPN_ETA_TEST_STATS='    Connection State:            Connected
     Session Disconnect:          58 Minutes Remaining' "$PLUGIN")
-check "under an hour turns orange" "VPN 58m | color=orange" "$(first_line "$out")"
+check "under an hour stays green" "VPN 58m | color=green" "$(first_line "$out")"
 
 out=$(VPN_ETA_TEST_STATS='    Connection State:            Connected
     Session Disconnect:          11 Minutes Remaining' "$PLUGIN")
-check "the last quarter hour turns red" "VPN 11m | color=red" "$(first_line "$out")"
+check "the last quarter hour stays green" "VPN 11m | color=green" "$(first_line "$out")"
 
 out=$(VPN_ETA_TEST_STATS='    Connection State:            Connected
     Session Disconnect:          1 Day 3 Hours 5 Minutes Remaining' "$PLUGIN")
@@ -318,7 +318,7 @@ seed_cache() {
 
 seed_cache 600
 out=$(VPN_ETA_TEST_IFCONFIG=$TUNNEL_UP VPN_ETA_TEST_STATS=$NOT_ATTACHED "$PLUGIN")
-check "a live tunnel keeps the countdown alive" "VPN 2h 50m | color=green" "$(first_line "$out")"
+check "a live tunnel keeps the countdown alive" "VPN 2h 50m | color=orange" "$(first_line "$out")"
 # This render says a session is up and how long it has left, so the item that
 # ends one belongs here too — otherwise the picture and the actions disagree. It
 # is also the branch where Start cannot help: a client that will not answer
@@ -627,9 +627,9 @@ multi_bar() {
 check "a renamed copy reads its own config" "Lab 23h" "$(multi_bar vpn-eta-lab.1m.sh)"
 check "and the original still reads the shared one" "Work 23h 53m" "$(multi_bar vpn-eta.1m.sh)"
 # The dropdown is not short of space and keeps the exact number.
-check "the dropdown keeps the full countdown under compact" "23h 53m remaining" \
+check "the dropdown keeps the full countdown under compact" "23h 53m remaining · confirmed by Cisco" \
 	"$(env VPN_ETA_COMPACT=1 VPN_ETA_TEST_STATS="$(stats_for '23 Hours 53 Minutes Remaining')" \
-		"$PLUGIN" | sed -n '3p' | sed 's/ |.*//')"
+		"$PLUGIN" | sed -n '4p' | sed 's/ |.*//')"
 
 
 reset_session_state() {
@@ -712,6 +712,13 @@ check "a reconnect inside the limit is still routine" "VPN 2h 56m… | color=ora
 check "and says where its number came from" "Deadline carried from a reading 4m ago" \
 	"$(printf '%s\n' "$out" | sed -n '5s/ | .*//p')"
 check "and interrupts nobody" "0" "$(notifications)"
+reset_session_state
+printf 'epoch=%s\nminutes=10\naddress=10.0.0.2\n' "$(($(date +%s) - 60))" >"$STATE_DIR/last-session"
+seed_transition 60
+out=$(env VPN_ETA_TEST_STATS='    Connection State:            Reconnecting' \
+	VPN_ETA_TEST_PERSIST=1 "$PLUGIN")
+check "a short carried countdown does not make a routine reconnect red" "VPN 9m… | color=orange" \
+	"$(first_line "$out")"
 
 out=$(reconnecting 600 600)
 check "a reconnect past the limit turns red" "VPN 2h 50m… | color=red" "$(first_line "$out")"
@@ -1137,7 +1144,7 @@ chmod +x "$AUTO_DIR/security" "$AUTO_DIR/vpn"
 export AUTO_DIR
 auto_env=(VPN_ETA_AUTO_CONNECT=1 VPN_ETA_HOST=example.invalid VPN_ETA_USER=demo
 	VPN_ETA_VPN_BIN="$AUTO_DIR/vpn" VPN_ETA_SECURITY_BIN="$AUTO_DIR/security"
-	VPN_ETA_STATE_DIR="$AUTO_DIR/state" VPN_ETA_TEST_PERSIST=1)
+	VPN_ETA_STATE_DIR="$AUTO_DIR/state" VPN_ETA_TEST_PERSIST=1 VPN_ETA_TEST_AUTO_WAIT=1)
 env "${auto_env[@]}" VPN_ETA_TEST_STATS="$DISCONNECTED" "$PLUGIN" auto-connect >/dev/null
 check "automatic login answers Cisco from Keychain" "success" "$(cat "$AUTO_DIR/result" 2>/dev/null)"
 check "automatic login keeps credentials out of state" "0" \
@@ -1310,8 +1317,9 @@ check "missing automatic-login settings are shown in the menu" "1" \
 check "missing automatic-login settings pause attempts" "true" \
 	"$([ -e "$AUTO_DIR/incomplete-state/auto-paused" ] && echo true || echo false)"
 
-# The scheduled tick must render the new Cisco state after its background
-# connector finishes, instead of overwriting it with the old "off" reading.
+# The scheduled tick must not wait for the login: SwiftBar shows nothing new
+# until the run exits, so a blocking login keeps the expiring session's last
+# countdown on the bar. The connector refreshes the menu once Cisco answers.
 cat >"$AUTO_DIR/vpn-stateful" <<'FAKE'
 #!/bin/bash
 if [ "$1" = stats ]; then
@@ -1325,20 +1333,53 @@ fi
 FAKE
 cat >"$AUTO_DIR/connect-stateful" <<'FAKE'
 #!/bin/bash
+sleep 4
 printf 'attempt\n' >>"$AUTO_DIR/stateful-attempts"
 printf 'connected\n' >"$AUTO_DIR/stateful-cisco"
 FAKE
 chmod +x "$AUTO_DIR/vpn-stateful" "$AUTO_DIR/connect-stateful"
 printf 'disconnected\n' >"$AUTO_DIR/stateful-cisco"
 : >"$AUTO_DIR/stateful-attempts"
-out=$(env VPN_ETA_CONFIG=/dev/null VPN_ETA_AUTO_CONNECT=1 VPN_ETA_HOST=example.invalid \
-	VPN_ETA_USER=demo VPN_ETA_VPN_BIN="$AUTO_DIR/vpn-stateful" \
-	VPN_ETA_AUTO_CONNECT_BIN="$AUTO_DIR/connect-stateful" \
-	VPN_ETA_STATE_DIR="$AUTO_DIR/stateful-state" "$PLUGIN")
+stateful_refresh=$AUTO_DIR/stateful-refreshes
+: >"$stateful_refresh"
+stateful_env=(VPN_ETA_CONFIG=/dev/null VPN_ETA_AUTO_CONNECT=1 VPN_ETA_HOST=example.invalid
+	VPN_ETA_USER=demo VPN_ETA_VPN_BIN="$AUTO_DIR/vpn-stateful"
+	VPN_ETA_AUTO_CONNECT_BIN="$AUTO_DIR/connect-stateful"
+	VPN_ETA_STATE_DIR="$AUTO_DIR/stateful-state" VPN_ETA_REFRESH_SINK="$stateful_refresh"
+	SWIFTBAR=1 SWIFTBAR_PLUGIN_PATH=/somewhere/vpn-eta.1m.sh)
+started=$(date +%s)
+out=$(env "${stateful_env[@]}" "$PLUGIN")
+check "a scheduled login does not hold the render" "true" \
+	"$([ $(($(date +%s) - started)) -lt 4 ] && echo true || echo false)"
+check "the expired session is replaced by sign-in progress at once" "VPN connecting… | color=orange" \
+	"$(first_line "$out")"
+for _ in $(seq 1 100); do
+	[ -s "$AUTO_DIR/stateful-attempts" ] && grep -q refreshplugin "$stateful_refresh" && break
+	sleep 0.1
+done
+check "the finished login asks SwiftBar to read again" "true" \
+	"$(grep -q 'refreshplugin?name=vpn-eta' "$stateful_refresh" && echo true || echo false)"
+out=$(env "${stateful_env[@]}" "$PLUGIN")
 check "scheduled automatic login renders the new connected state" "VPN 23h 59m | color=green" \
 	"$(first_line "$out")"
 check "scheduled automatic login starts only once" "1" \
 	"$(wc -l <"$AUTO_DIR/stateful-attempts" | tr -d ' ')"
+
+# Inside the retry backoff nothing is signing in, so the menu must not say so.
+backoff_state=$AUTO_DIR/backoff-state
+mkdir -p "$backoff_state"
+date +%s >"$backoff_state/auto-retry"
+out=$(env "${auto_env[@]}" VPN_ETA_STATE_DIR="$backoff_state" \
+	VPN_ETA_AUTO_CONNECT_BIN="$AUTO_DIR/connect" VPN_ETA_TEST_STATS="$DISCONNECTED" "$PLUGIN")
+check "a disconnect inside the retry backoff stays off" "VPN off | color=gray" "$(first_line "$out")"
+
+out=$(env "${auto_env[@]}" VPN_ETA_TEST_PERSIST= VPN_ETA_STATE_DIR="$backoff_state" \
+	VPN_ETA_TEST_STATS='    Connection State:            Connected (session expiring soon)
+    Session Disconnect:          1 Minute Remaining' "$PLUGIN")
+check "an expiring session stays green" "VPN 1m | color=green" "$(first_line "$out")"
+check "the menu leads with the state" "Connected" "$(printf '%s\n' "$out" | sed -n '3p' | sed 's/ |.*//')"
+check "an expiring session says it will sign in again" "1" \
+	"$(printf '%s\n' "$out" | grep -c 'Will sign in again automatically')"
 
 # A SwiftBar refresh during the background action shows that work is underway.
 progress_state=$AUTO_DIR/progress-state

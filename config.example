@@ -52,12 +52,6 @@
 #   VPN_ETA_COMPACT=1     ->  Work 6h   ... and Work 45m under the hour
 #VPN_ETA_COMPACT=
 
-# Shield colour, in minutes remaining: red at or below the first, amber at or
-# below the second, neutral above. Text countdown mode keeps its former green.
-# These thresholds are separate from notification marks below.
-#VPN_ETA_CRITICAL_MINUTES=15
-#VPN_ETA_WARN_MINUTES=60
-
 # ── Notifications ────────────────────────────────────────────────────────────
 
 # Minutes-remaining marks that raise a notification, high to low. Each fires

@@ -3,12 +3,12 @@
 # <xbar.title>VPN session ETA</xbar.title>
 # <xbar.desc>Shows the server-reported time remaining in the VPN session.</xbar.desc>
 # <xbar.author>Ruslan Rakhimov</xbar.author>
-# <xbar.version>v1.4.0</xbar.version>
+# <xbar.version>v1.5.0</xbar.version>
 
 # The plugin is COPIED into SwiftBar's folder, so the installed file has no link
 # back to the tag it came from. Without this a bug report can name the macOS,
 # SwiftBar and Cisco versions and still not say which vpn-eta is running.
-VERSION=1.4.0
+VERSION=1.5.0
 
 export PATH="/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin"
 
@@ -101,14 +101,6 @@ TEARDOWN_GRACE_SECONDS=$(number_or "${VPN_ETA_TEARDOWN_GRACE:-300}" 300)
 # fifteen-minute warning a week later. 0 removes the item — NOTIFY_MARKS="" is
 # the way to turn the warnings off for good.
 MUTE_MINUTES=$(number_or "${VPN_ETA_MUTE_MINUTES:-60}" 60)
-
-# Colour thresholds for the countdown, in minutes: at or below the first it goes
-# red, at or below the second orange, otherwise the optional text view is green.
-# The icon-only view uses a neutral shield for a healthy connection. They are independent of
-# NOTIFY_MARKS on purpose — a colour you glance at and a notification that
-# interrupts you do not deserve the same threshold.
-CRITICAL_MINUTES=$(number_or "${VPN_ETA_CRITICAL_MINUTES:-15}" 15)
-WARN_MINUTES=$(number_or "${VPN_ETA_WARN_MINUTES:-60}" 60)
 
 # How long an extrapolated countdown stays trustworthy once the client stops
 # answering. Past this the plugin admits it does not know.
@@ -428,16 +420,6 @@ format_menubar() {
 	'
 }
 
-color_for_minutes() {
-	if [ "$1" -le "$CRITICAL_MINUTES" ]; then
-		echo red
-	elif [ "$1" -le "$WARN_MINUTES" ]; then
-		echo orange
-	else
-		echo green
-	fi
-}
-
 # BEGIN SHIELD ICONS
 ICON_NORMAL='iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAACXBIWXMAAA7DAAAOwwHHb6hkAAAAGXRFWHRTb2Z0d2FyZQB3d3cuaW5rc2NhcGUub3Jnm+48GgAAAa9JREFUSIntlbFrU0Ecxz/fl0RSAtqlk0MEF7e8XAJpLIqBDv4PbrY6uUgt6qCDDlqlg+AkdVDwfyh1iCiUV3h5bTcn6dJBXJqAUIx5P4dYjUm0MWm2fqc77u7z4XfH3cnMGGe8sdKB5EHDFaZfGt6lo4CK+F1UC+agowJDl8Gyo+Mt22a1k+wa/bxZWz87Cj5fKO929sd+BseCY8HRCurAqVFgkvSTUe8n2AEyzs0MfZt9fzoLZECfegQSqwAxravDCpRgDsBos/4QeDRfAQ1Ji86Vcv8Lz+dnfDMWgHo6Fb/uEYRhWDe4BkyYvLfOlWcHhTtXnsWL14AJmc0HQdD4VVX3h+MXyjcFT4AE8MZaurO1tb5Ln/j++dNK2GPgCtBCdmszDJ51zukRAOQKpQvCeyE4B3wFHk2eTC9Xq9V9gEqlkt5r7C8Ad4GMwUcjvr5d2/jQzeorACgWi6nvlroh7D5oEtiR2SKASU+BM2B7hh4k1XwehmGzH+evgoM4d3EKfXtoaJ72tgG0hK1gJ+5F0fsv/1p/qOC3qJRDWgLA7HYUbWwPsm5gwbAZ+1v0A08qkLfzeD4DAAAAAElFTkSuQmCC,iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAACXBIWXMAAA7DAAAOwwHHb6hkAAAAGXRFWHRTb2Z0d2FyZQB3d3cuaW5rc2NhcGUub3Jnm+48GgAAAY1JREFUSIntlDFPFEEUgL93HHg4m2BIrEjExB+grQWJBQU/wPgDhJLEWBgLAoVWhtYSK/4EpZW9FZ0hJBRqcbL35u3irfcs2CUrLgfccR0vmWRn33vfN5PZHXF3JhmtidKBdvUQo31yl2c3ARXxzyHcXYV/diArIiyOD2cRZKWat8/lvyfJ7KNxBDFmR/X5xM/gVnAruFGBHwNzY/LklOHHDYLWARDyPB/5by57A7S+/Sdw9z2Aohi8HFVQFIPVOgtAquu62+3OzczcOQSZhsHTEMLX68BjjE+g9QXk98lJ58H8PGm18rPR69kLVXNV+6GaL9dzw4ZqvnzaY97r2fN6rqHYXqtaX9UGqrZrZgsXgc1sQdV2y9q+qr06X9PYmKbZkqrtl7vRGLMNd+/UajoxZhuqpmXNfppmS02sszNoiOkYs3VgC7gHHLjzBkCEbeAh8At4F8LsR6DfBBkmAEBV70P7vYivAVPl6z/usgPFZpIkP4f1XyqoIsb4GKY+lPy3V/3KriwYNSZ+F/0FbrlKH0LnVlgAAAAASUVORK5CYII='
 ICON_AMBER='iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAACXBIWXMAAA7DAAAOwwHHb6hkAAAAGXRFWHRTb2Z0d2FyZQB3d3cuaW5rc2NhcGUub3Jnm+48GgAAAbpJREFUSIntlT9rU1EYh59f7i2YBntvhk4OKbi4VXAWOgTSgt/ASVu1NiUgtWiHOujgPxwMjVKxFAW/gdRcXQqdO7g5SZcOUtTeiFVIcl+HJJI2UWOabP1N58A5z3PeczjnyMzoZ2J9pQNuoxFk/RXDxnoBFVrPFHYnoakCw8aBVA/4qToLaKqgnk/jhfDkYejFrLfd3O/7GRwJjgQ9FAhCwDsUTRLg1Vn7BcAWkFibTXZ9m4vTfgpIGHxsEZgoAjhEF7sVoGgSQNRY+wRu2XkBlMw0H+SSo//LXssmTyPNAWHkuC9bBOnlL6GkS2Bxq0bvghk/3Sk8mPHTMaK3YHFDUxP5z6XfRR38cIpZ7xrwAHCAV5WofPPc071t2uT11cETbmzgHnAeqAquZwrh4+YxLYLaiobOmvQMOAV8N3Q3vhc+Glu1nwDrF3Tsx6A3J2wBSAAfZHY586S0cZDVVgCweUUDO+7QrOCWgQ9sGZoHEPYQGBHsGtwerpSWzixbuR3nj4JG3uSOD6uqO6ApatsGUAV7bo4tTuS/7fxt/j8FjQS55KhVovsAcmM3Mvmv7zuZ17Gg2/T9LfoFaHKWEQZ4uboAAAAASUVORK5CYII=,iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAACXBIWXMAAA7DAAAOwwHHb6hkAAAAGXRFWHRTb2Z0d2FyZQB3d3cuaW5rc2NhcGUub3Jnm+48GgAAAbVJREFUSIntlT9rU1Echp9fciuGG6kVxMEhgotbBV2FSnNL0vYbdLPVyUVqUQcddPAfDoJTqUMFv0FyGxqlBVcd3JykS4fiYFNzsNh78zo0gdAbNabJ1nc6/37Pw+FwzjFJDDKpgdIBr9Vw5eC1jLF+QE2s+1PVWWjbgVIUgFwf+LkmC2jbwb6arWyxev4w9PpKsNneH/gZHAmOBP0UiJqJ4cPhzEwMI2oJgbANgb8bjvd8m7crhZzAN/iaEBiNCkBkdq1XgdeIZgFkVBKCvWO2DOwgW3Clwuj/wl04cRGYB2q/GHqTEIzkqzXgOpBRKq66cpDvGl4O8kKrQAbT3KliuNOas4MfjguDW4JnQFrordfQ3cz0+0065Gdp/GyUsieGzQCxYbf9ydWX7WsSAoAf5fwVM1sELhg4icdZP3rB2NouAOtXj9edN2/GPYEPfJF048TUuw8HWR0FAHy6POS2Rm4KHgAnDW3IWNgv4rmwc8C2wUP/zPdXXPq41wnzZ0Ez9ZXJ0yh6BJoD0s3hGGwJ8+5ni+G3v9X/U9CKKxVGlY6fAlicvuNPVz53U9e1oNcM/C36DZw9ngMv/autAAAAAElFTkSuQmCC'
@@ -456,8 +438,8 @@ render_bar() {
 	fi
 	case $icon in
 	connected) graphic=$ICON_NORMAL ;;
-	warn | transition | unknown) graphic=$ICON_AMBER ;;
-	critical | stuck) graphic=$ICON_RED ;;
+	transition | unknown) graphic=$ICON_AMBER ;;
+	stuck) graphic=$ICON_RED ;;
 	off) graphic=$ICON_MUTED ;;
 	*) graphic=$ICON_RED ;;
 	esac
@@ -466,23 +448,21 @@ render_bar() {
 	printf ' | image=%s tooltip=%s\n' "$graphic" "$status"
 }
 
+# Colour follows the tunnel's state, never the minutes left: a healthy session
+# an hour from its deadline is still healthy, and the countdown already has the
+# dropdown and the NOTIFY_MARKS notifications to say how close that is.
 render_time_bar() {
-	minutes=$1
-	qualifier=${2:-}
-	color=$(color_for_minutes "$minutes")
-	case $color in
-	red) icon=critical ;;
-	orange) icon=warn ;;
-	*) icon=connected ;;
-	esac
-	render_bar "$icon" "$(format_menubar "$minutes")$qualifier" "$color" "VPN ${minutes}m remaining"
+	render_bar connected "$(format_menubar "$1")" green "VPN ${1}m remaining"
 }
 
+# $2 says who vouches for the tunnel: `client` when Cisco still reports it
+# Connected, anything else when only the utun interface does.
 render_estimated_bar() {
-	minutes=$1
-	color=$(color_for_minutes "$minutes")
-	if [ "$color" = red ]; then icon=critical; else icon=unknown; fi
-	render_bar "$icon" "$(format_menubar "$minutes")" "$color" "VPN connected, time estimated"
+	if [ "${2-}" = client ]; then
+		render_bar connected "$(format_menubar "$1")" green "VPN connected, time estimated"
+	else
+		render_bar unknown "$(format_menubar "$1")" orange "VPN state unconfirmed, time estimated"
+	fi
 }
 
 save_state() {
@@ -1097,6 +1077,13 @@ expect {
 EXPECT
 }
 
+# Whether the retry backoff would let a scheduled attempt start now.
+auto_retry_due() {
+	last=$(cat "$AUTO_RETRY_FILE" 2>/dev/null)
+	case $last in '' | *[!0-9]*) last=0 ;; esac
+	[ $(($(now_epoch) - last)) -ge "$AUTO_RETRY_SECONDS" ]
+}
+
 auto_connect_session() {
 	mode=${1:-scheduled}
 	[ -n "$AUTO_CONNECT" ] || return 1
@@ -1134,10 +1121,8 @@ auto_connect_session() {
 	if [ "$mode" = explicit ]; then
 		rm -f "$AUTO_PAUSE_FILE" "$AUTO_RETRY_FILE"
 	fi
+	auto_retry_due || return 0
 	now=$(now_epoch)
-	last=$(cat "$AUTO_RETRY_FILE" 2>/dev/null)
-	case $last in '' | *[!0-9]*) last=0 ;; esac
-	[ $((now - last)) -ge "$AUTO_RETRY_SECONDS" ] || return 0
 	printf '%s\n' "$now" >"$AUTO_RETRY_FILE" || return 1
 	[ ! -e "$AUTO_PAUSE_FILE" ] || return 0
 	umask 077
@@ -1157,6 +1142,10 @@ auto_connect_session() {
 			printf '%s\tclient-connected\n' "$(now_epoch)" >>"$AUTO_ATTEMPT_FILE"
 		fi
 		notify "VPN connected" "Cisco confirmed automatic sign-in."
+		# A scheduled attempt runs detached from the tick that started it, so
+		# nothing else asks SwiftBar to read the new state; the menu action
+		# refreshes on its own way out.
+		[ "$mode" = explicit ] || refresh_menu_bar
 		return 0
 	fi
 	case $auto_rc in
@@ -1174,6 +1163,7 @@ auto_connect_session() {
 	printf '%s\tfailed-%s\n' "$(now_epoch)" "$pause_reason" >>"$AUTO_ATTEMPT_FILE"
 	notify "VPN automatic login paused" \
 		"Automatic sign-in stopped at ${pause_reason}. Use manual SMS or TOTP login if needed."
+	[ "$mode" = explicit ] || refresh_menu_bar
 	return 1
 }
 
@@ -1225,7 +1215,7 @@ render_unreadable() {
 		session=active
 		short=$(format_minutes "$cached_minutes")
 		record_event unreadable "$cached_address" "estimated=${cached_minutes}m tunnel=up"
-		render_estimated_bar "$cached_minutes"
+		render_estimated_bar "$cached_minutes" tunnel
 		echo "---"
 		echo "About ${short} remaining | size=14"
 		echo "Tunnel is still up; countdown estimated | size=12"
@@ -1448,16 +1438,8 @@ if [ -z "$remaining" ]; then
 			# green number says the opposite. The ellipsis is the same mark this
 			# branch already shows when it has no number to carry, and it is what
 			# survives being read in a hurry; the colour is the second telling.
-			if [ -n "$stuck" ] || [ "$cached_minutes" -le "$CRITICAL_MINUTES" ]; then
-				bar_color=red
-			else
-				bar_color=orange
-			fi
-			if [ -n "$stuck" ] || [ "$cached_minutes" -le "$CRITICAL_MINUTES" ]; then
-				bar_icon=stuck
-			else
-				bar_icon=transition
-			fi
+			if [ -n "$stuck" ]; then bar_color=red; else bar_color=orange; fi
+			if [ -n "$stuck" ]; then bar_icon=stuck; else bar_icon=transition; fi
 			render_bar "$bar_icon" "$(format_menubar "$cached_minutes")…" "$bar_color" "VPN ${state}"
 			echo "---"
 			echo "About ${short} remaining | size=14"
@@ -1495,12 +1477,29 @@ if [ -z "$remaining" ] && [ "$bare_state" != Connected ]; then
 	fi
 	clear_state
 	if [ "$bare_state" = Disconnected ] && [ -n "$AUTO_CONNECT" ] &&
-		[ "${VPN_ETA_AUTO_RENDER_ONLY:-}" != 1 ] &&
 		[ ! -e "$AUTO_PAUSE_FILE" ] && may_write_state; then
 		if mkdir -p "$STATE_DIR" 2>/dev/null; then
-			# Another scheduled tick may already be connecting.
-			/usr/bin/lockf -t 0 -k "$STATE_DIR/auto.lock" "$0" auto-connect >/dev/null 2>&1 || true
-			VPN_ETA_AUTO_RENDER_ONLY=1 exec "$0"
+			# Detached, because SwiftBar shows nothing new until this run exits:
+			# waiting here for the login left the expiring session's last
+			# countdown on the bar for as long as the sign-in took. The attempt
+			# refreshes the plugin itself once Cisco answers, and the lock keeps
+			# a second tick from starting another one meanwhile.
+			signing_in=
+			if auto_retry_due && [ -n "${VPN_ETA_HOST:-}" ] && [ -n "${VPN_ETA_USER:-}" ]; then
+				signing_in=1
+			fi
+			/usr/bin/lockf -t 0 -k "$STATE_DIR/auto.lock" "$0" auto-connect </dev/null >/dev/null 2>&1 &
+			# The suite counts attempts right after this run returns.
+			[ -z "${VPN_ETA_TEST_AUTO_WAIT:-}" ] || wait
+			if [ -n "$signing_in" ]; then
+				render_bar transition 'connecting…' orange 'VPN connecting'
+				echo "---"
+				echo "Disconnected · signing in automatically | size=14"
+				echo "---"
+				history_line
+				refresh_button
+				exit 0
+			fi
 		fi
 	fi
 	render_bar off off gray 'VPN disconnected'
@@ -1537,7 +1536,7 @@ if [ -z "$remaining" ]; then
 	record_event connected "$(client_address "$stats")" "remaining=unreported (client sent ${reported:-nothing})"
 	if load_state && cache_is_fresh && cache_matches_session "$(client_address "$stats")"; then
 		short=$(format_minutes "$cached_minutes")
-		render_estimated_bar "$cached_minutes"
+		render_estimated_bar "$cached_minutes" client
 		echo "---"
 		echo "About ${short} remaining | size=14"
 		echo "Estimated from a reading ${cached_age_minutes}m ago | size=12"
@@ -1559,7 +1558,6 @@ fi
 
 total_minutes=$(remaining_to_minutes "$remaining")
 short=$(format_minutes "$total_minutes")
-color=$(color_for_minutes "$total_minutes")
 
 address=$(client_address "$stats")
 if may_write_state; then
@@ -1574,8 +1572,8 @@ fi
 
 render_time_bar "$total_minutes"
 echo "---"
-	echo "${short} remaining | size=15"
-	echo "Connected · confirmed by Cisco | size=11"
+echo "Connected | size=15"
+echo "${short} remaining · confirmed by Cisco | size=12"
 # The whole field on purpose, where the branches above compare the word: a bare
 # `Connected` is the unremarkable case and says nothing worth a line, while
 # `Connected (session expiring soon)` is the client volunteering something the
@@ -1583,5 +1581,12 @@ echo "---"
 if [ -n "$state" ] && [ "$state" != Connected ]; then
 	echo "Connection state: ${state} | size=12"
 fi
+case $state in
+*'expiring soon'*)
+	if [ -n "$AUTO_CONNECT" ] && [ ! -e "$AUTO_PAUSE_FILE" ]; then
+		echo "Will sign in again automatically when it ends | size=11"
+	fi
+	;;
+esac
 echo "---"
 menu_actions active
