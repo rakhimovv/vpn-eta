@@ -648,6 +648,23 @@ last_notification() { tail -1 "$NOTIFY_SINK" 2>/dev/null | cut -f1; }
 history_lines() { wc -l <"$STATE_DIR/history.log" 2>/dev/null | tr -d ' '; }
 last_event() { awk -F'\t' 'END { print $2 }' "$STATE_DIR/history.log" 2>/dev/null; }
 
+# A detached sign-in's refresh and a menu click once logged the same change
+# twice in one second. Concurrent runs must still write it once.
+reset_session_state
+for _ in 1 2 3 4 5 6; do run_live "$(stats_for '10 Hours Remaining')" & done
+wait
+check "concurrent runs log one change once" "1" "$(history_lines)"
+check "concurrent runs release the event lock" "false" \
+	"$([ -e "$STATE_DIR/last-event.lock" ] && echo true || echo false)"
+
+# A run killed inside the lock must not silence the history for good.
+reset_session_state
+mkdir "$STATE_DIR/last-event.lock"
+run_live "$(stats_for '10 Hours Remaining')"
+check "a stale event lock is taken over" "1" "$(history_lines)"
+check "a taken-over event lock is released" "false" \
+	"$([ -e "$STATE_DIR/last-event.lock" ] && echo true || echo false)"
+
 # ---------------------------------------------------------------------------
 # Cisco between states is not a session ending. A reconnect is the single most
 # ordinary thing that happens to a laptop VPN, and the whole premise of this

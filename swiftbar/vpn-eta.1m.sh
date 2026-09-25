@@ -60,6 +60,7 @@ fi
 STATE_DIR=${VPN_ETA_STATE_DIR:-${SWIFTBAR_PLUGIN_DATA_PATH:-$HOME/Library/Application Support/vpn-eta}}
 STATE_FILE=$STATE_DIR/last-session
 EVENT_FILE=$STATE_DIR/last-event
+EVENT_LOCK=$STATE_DIR/last-event.lock
 HISTORY_FILE=$STATE_DIR/history.log
 TEARDOWN_FILE=$STATE_DIR/expected-teardown
 MUTE_FILE=$STATE_DIR/muted-until
@@ -523,15 +524,35 @@ record_event() {
 	previous_event=
 	may_write_state || return 1
 	mkdir -p "$STATE_DIR" 2>/dev/null || return 1
+	# A detached sign-in's refresh and a menu click can land in the same second;
+	# without a lock both read the old key and both log the change.
+	event_lock
 	previous=$(cat "$EVENT_FILE" 2>/dev/null)
 	previous_event=${previous%%|*}
-	[ "$1|$2" = "$previous" ] && return 1
-	printf '%s\n' "$1|$2" >"$EVENT_FILE" 2>/dev/null || return 1
+	if [ "$1|$2" = "$previous" ] ||
+		! printf '%s\n' "$1|$2" >"$EVENT_FILE" 2>/dev/null; then
+		event_unlock
+		return 1
+	fi
 	printf '%s\t%s\t%s\n' "$(date +%Y-%m-%dT%H:%M:%S%z)" "$1" "$3" >>"$HISTORY_FILE" 2>/dev/null
 	trim_history
+	event_unlock
 	capture_incident "$1"
 	return 0
 }
+
+# mkdir is atomic, and a lock left by a killed run is taken over after about
+# two seconds rather than silencing the history for good.
+event_lock() {
+	tries=0
+	until mkdir "$EVENT_LOCK" 2>/dev/null; do
+		tries=$((tries + 1))
+		[ "$tries" -lt 20 ] || return 0
+		sleep 0.1
+	done
+}
+
+event_unlock() { rmdir "$EVENT_LOCK" 2>/dev/null; }
 
 # Saves the client's own log for the window leading up to a state change, so the
 # reason survives the system store's eviction the way the one-line summary

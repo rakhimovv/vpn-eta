@@ -95,6 +95,10 @@ notified), `last-event` (the dedupe key that makes a per-minute plugin log one l
 *change*), `history.log`, `expected-teardown` (a disconnect the plugin itself started must
 not raise an alarm), and `muted-until` (an epoch, so the silence lifts itself rather than
 waiting to be remembered).
+`record_event` holds a short-lived `last-event.lock` directory around the key check and the
+history append: a detached sign-in's refresh and a menu click once landed in the same second and
+logged one change twice. A run that has waited about two seconds takes the lock over, so a killed run cannot
+silence the history.
 
 Automatic reconnection adds `auto-retry`, `auto-paused`, a retained `auto.lock`,
 and a single overwritten `auto-attempt` stage trace (no credentials).
