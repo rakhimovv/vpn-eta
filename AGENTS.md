@@ -45,7 +45,11 @@ actionless dropdown rows so they cannot be selected.
 ## Layout
 
 `swiftbar/vpn-eta.1m.sh` renders and runs every action as a standalone Bash file; SwiftBar
-reruns it every minute (the `1m` in the name). At runtime the repository is not there.
+reruns it every minute (the `1m` in the name). At runtime the repository is not there, so a
+committed fix is not running until the copy in SwiftBar's plugin folder is replaced. Before
+reading history or incident logs as evidence against HEAD, `cmp` that copy with
+`swiftbar/vpn-eta.1m.sh`: a duplicate history line on 2026-09-26 came from a copy older than
+the commit that fixed exactly that.
 `install.sh` also copies `swiftbar/network-watch.swift` into a hidden folder beside the plugin
 and registers a per-user LaunchAgent. It asks SwiftBar to rerun the plugin after macOS network
 changes; the plugin itself still confirms the state through Cisco. A missing watcher leaves the
