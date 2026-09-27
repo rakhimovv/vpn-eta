@@ -74,6 +74,10 @@ shoot() {
 			barimage = attr(params, "image")
 			split(barimage, icons, ",")
 			barimage = icons[2]
+			# A template is black ink that macOS tints to the bar; this bar is
+			# dark, so it is drawn white here the way macOS would draw it.
+			bartemplate = attr(params, "templateImage")
+			if (bartemplate != "") barimage = bartemplate
 			next
 		}
 		# SwiftBar puts a separator right after the menu-bar line; a real menu
@@ -111,7 +115,7 @@ shoot() {
 		printf "  .sep { height: 1px; background: rgba(0,0,0,.13); margin: 5px 12px; }\n"
 		printf "</style>\n"
 		if (barimage != "")
-			printf "<div class=\"menubar\"><img src=\"data:image/png;base64,%s\"></div>\n", barimage
+			printf "<div class=\"menubar\"><img%s src=\"data:image/png;base64,%s\"></div>\n", (bartemplate != "" ? " style=\"filter: invert(1)\"" : ""), barimage
 		else
 			printf "<div class=\"menubar\"><span>%s</span></div>\n", esc(bar)
 		printf "<div class=\"menu\">\n"

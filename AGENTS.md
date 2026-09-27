@@ -38,6 +38,12 @@ exercises SwiftBar reading `bash=… param0=… terminal=false` and launching th
 in that half of an action item is invisible to `tests/` and to ShellCheck alike. A hand-click
 is the only real proof. Click a changed item once before trusting it in an incident.
 
+The same holds for how the shield is drawn. The connected and off shields are
+`templateImage=`, tinted by macOS like Wi-Fi. A coloured one stays an
+`image=light,dark` pair, and on 2026-09-27 SwiftBar picked the white half of the
+old neutral pair on a light bar beside a dark Wi-Fi glyph. Only an eye on the
+menu bar proves a change to either.
+
 SwiftBar treats an informational row with `color=` as an action even without
 `bash=`, `href=` or `refresh=`. Keep colour on the menu-bar title; omit it from
 actionless dropdown rows so they cannot be selected.
@@ -137,10 +143,14 @@ not an interruption anybody asked to be spared.
 A sixth entry, `incidents/`, appears only under `VPN_ETA_INCIDENT_LOG=1` — README says what it is
 for and why the system log cannot be relied on to still hold it. What the README does not say:
 it fires from inside `record_event`, after the history line and therefore already past
-`may_write_state`, and **only on the tick that actually wrote one**. That is what makes a
-synchronous 2–4 second `log show` affordable — it runs about as often as the tunnel changes
-state, not once a minute — so this path needs no background job and nothing for SwiftBar to
-orphan. `trim_incidents` bounds the directory by COUNT, and leans on the filenames being
+`may_write_state`, and **only on the tick that actually wrote one**, so the 2–4 second
+`log show` runs about as often as the tunnel changes state, not once a minute. It runs
+**detached** all the same: SwiftBar shows whichever run exits last, and the refresh burst
+around a reconnect overlaps runs. On 2026-09-27 history logged `Connecting` at 14:14:16 and
+`Connected` a second later; SwiftBar logged that burst's runs exiting at 17.7, 18.6, 18.6 and
+19.96 s, and nothing more until 14:14:47. A tick held open by a synchronous capture of that
+length exits after the one that saw `Connected`, and leaves the transition on the bar.
+`trim_incidents` bounds the directory by COUNT, and leans on the filenames being
 timestamps so the shell's glob order is already chronological: no `ls` output is parsed and no
 `find` has to be told what a capture looks like. `VPN_ETA_LOG_BIN` is the seam that lets the
 suite drive all of it on a machine that has never run a VPN.
@@ -173,7 +183,7 @@ make a test pass.
 | `VPN_ETA_LOG_BIN` | a fake `/usr/bin/log` — the only way to test the incident capture |
 | `VPN_ETA_SECURITY_BIN` | a fake `security` command for automatic-login fixtures |
 | `VPN_ETA_AUTO_CONNECT_BIN` | a fake automatic connector for retry and pause fixtures |
-| `VPN_ETA_TEST_AUTO_WAIT` | makes a tick wait for the detached scheduled login it launched |
+| `VPN_ETA_TEST_WAIT` | makes a tick wait for the detached login or incident capture it launched |
 | `VPN_ETA_CONFIG` | the config file to source (`/dev/null` for documented defaults) |
 
 ## Adding a setting

@@ -64,9 +64,9 @@ The menu bar holds one outline shield with no mark inside. Its colour changes wi
 
 | Shield colour | Means |
 |---|---|
-| Neutral | Connected, as Cisco reports it — however little time is left. The menu shows the remaining time and whether it is estimated. |
+| Menu-bar ink (black or white, like Wi-Fi) | Connected, as Cisco reports it — however little time is left. The menu shows the remaining time and whether it is estimated. |
 | Amber | The connection is changing (connecting, reconnecting, automatic sign-in), or Cisco cannot confirm its state. Open the menu for details. |
-| Grey | A reported disconnect, or no session *and* no tunnel. |
+| Faded | A reported disconnect, or no session *and* no tunnel. |
 | Red | A transition is stuck, sign-in is delayed, or Cisco is missing. Open the menu for the reason. |
 
 The colour follows the state, never the clock. How close the deadline is lives in the menu

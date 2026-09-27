@@ -3,6 +3,17 @@
 Notable changes. Dates are release dates; the format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.5.1] — 2026-09-27
+
+### Fixed
+
+- The connected and disconnected shields follow the menu bar's own tint, as
+  Wi-Fi does, instead of a light/dark pair that could draw white on a light
+  menu bar. Disconnected is the same shield, faded.
+- After a reconnect the shield could fall back to amber for up to a minute:
+  the run that saved an incident log finished after the run that saw the
+  session return. The capture now runs in the background.
+
 ## [1.5.0] — 2026-09-25
 
 ### Changed

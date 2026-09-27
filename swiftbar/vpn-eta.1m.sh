@@ -3,12 +3,12 @@
 # <xbar.title>VPN session ETA</xbar.title>
 # <xbar.desc>Shows the server-reported time remaining in the VPN session.</xbar.desc>
 # <xbar.author>Ruslan Rakhimov</xbar.author>
-# <xbar.version>v1.5.0</xbar.version>
+# <xbar.version>v1.5.1</xbar.version>
 
 # The plugin is COPIED into SwiftBar's folder, so the installed file has no link
 # back to the tag it came from. Without this a bug report can name the macOS,
 # SwiftBar and Cisco versions and still not say which vpn-eta is running.
-VERSION=1.5.0
+VERSION=1.5.1
 
 export PATH="/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin"
 
@@ -422,10 +422,10 @@ format_menubar() {
 }
 
 # BEGIN SHIELD ICONS
-ICON_NORMAL='iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAACXBIWXMAAA7DAAAOwwHHb6hkAAAAGXRFWHRTb2Z0d2FyZQB3d3cuaW5rc2NhcGUub3Jnm+48GgAAAa9JREFUSIntlbFrU0Ecxz/fl0RSAtqlk0MEF7e8XAJpLIqBDv4PbrY6uUgt6qCDDlqlg+AkdVDwfyh1iCiUV3h5bTcn6dJBXJqAUIx5P4dYjUm0MWm2fqc77u7z4XfH3cnMGGe8sdKB5EHDFaZfGt6lo4CK+F1UC+agowJDl8Gyo+Mt22a1k+wa/bxZWz87Cj5fKO929sd+BseCY8HRCurAqVFgkvSTUe8n2AEyzs0MfZt9fzoLZECfegQSqwAxravDCpRgDsBos/4QeDRfAQ1Ji86Vcv8Lz+dnfDMWgHo6Fb/uEYRhWDe4BkyYvLfOlWcHhTtXnsWL14AJmc0HQdD4VVX3h+MXyjcFT4AE8MZaurO1tb5Ln/j++dNK2GPgCtBCdmszDJ51zukRAOQKpQvCeyE4B3wFHk2eTC9Xq9V9gEqlkt5r7C8Ad4GMwUcjvr5d2/jQzeorACgWi6nvlroh7D5oEtiR2SKASU+BM2B7hh4k1XwehmGzH+evgoM4d3EKfXtoaJ72tgG0hK1gJ+5F0fsv/1p/qOC3qJRDWgLA7HYUbWwPsm5gwbAZ+1v0A08qkLfzeD4DAAAAAElFTkSuQmCC,iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAACXBIWXMAAA7DAAAOwwHHb6hkAAAAGXRFWHRTb2Z0d2FyZQB3d3cuaW5rc2NhcGUub3Jnm+48GgAAAY1JREFUSIntlDFPFEEUgL93HHg4m2BIrEjExB+grQWJBQU/wPgDhJLEWBgLAoVWhtYSK/4EpZW9FZ0hJBRqcbL35u3irfcs2CUrLgfccR0vmWRn33vfN5PZHXF3JhmtidKBdvUQo31yl2c3ARXxzyHcXYV/diArIiyOD2cRZKWat8/lvyfJ7KNxBDFmR/X5xM/gVnAruFGBHwNzY/LklOHHDYLWARDyPB/5by57A7S+/Sdw9z2Aohi8HFVQFIPVOgtAquu62+3OzczcOQSZhsHTEMLX68BjjE+g9QXk98lJ58H8PGm18rPR69kLVXNV+6GaL9dzw4ZqvnzaY97r2fN6rqHYXqtaX9UGqrZrZgsXgc1sQdV2y9q+qr06X9PYmKbZkqrtl7vRGLMNd+/UajoxZhuqpmXNfppmS02sszNoiOkYs3VgC7gHHLjzBkCEbeAh8At4F8LsR6DfBBkmAEBV70P7vYivAVPl6z/usgPFZpIkP4f1XyqoIsb4GKY+lPy3V/3KriwYNSZ+F/0FbrlKH0LnVlgAAAAASUVORK5CYII='
+ICON_NORMAL='iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAACXBIWXMAAA7DAAAOwwHHb6hkAAAAGXRFWHRTb2Z0d2FyZQB3d3cuaW5rc2NhcGUub3Jnm+48GgAAASJJREFUSIntlbFOAkEQhr8xkpCQaEUsrrjCB8AXIKG4RyA+gDyAsfZFaKh4CUrfgg60oMAGSYiNhrH573LigVyW7Zhkc5vZme+f2d3smbsT0y6i0oHLfGJmI6B3Iu6Luw8ALN8iM1sAN8BbIDwFlu6eQKkD2dLdb0PoKrSw6GdwFjgLnFZgDVyHwMzMxFhXCbwCLTNLAzRSoAXMqgQm+j4ECAx2WODu6D3KW/sEOrn/2AHcKfcDuCr8O0H3gAPvQFYDninHgf6vtYrgJ+AL2AJjIDkAThSzVc7jn5g9iV1gqoo2wDPQLK035dsoZgp0K1kHqmuom5Ugc6CvMZdvpZjGXs4R+9sGhsC3oK75EGj/m1/jIDu6fpM6t6z4Zcay6G/RD/Y2gSY/Pco3AAAAAElFTkSuQmCC'
+ICON_MUTED='iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAACXBIWXMAAA7DAAAOwwHHb6hkAAAAGXRFWHRTb2Z0d2FyZQB3d3cuaW5rc2NhcGUub3Jnm+48GgAAATZJREFUSIntlr1KA1EQRs8XQ1BUEGyUYCkKYkBE0+kD5BV8QF/DVEYRQRTElBbaCGIQJWg+izuB/Gp+CyHb7N6dnXPu3Z3dWdlmmltmqnQg2zyQdAysT4j7ZPusTQBsAAtAbUz4cis32xH8sH06Dl3SSet46s9gJpgJJiuoA7kJMHPB6hLUgKykpVHJkppv8VsvwWPst0cVAFsdrDbBA2lpBUmrw5IjpxCMapfAdh0ok5ZYkpQfAp4HSpFbDlaKdTYcSbtAMeRV4ML2ex/wInAIbAIN4Nz2bds1vTqapDXgCFgBvoBr4Mb2d8TnSLdjL2b9GjN/7mL1a5mSMsAOsE8qvRpQiXCR9N2vA1fAne1GT85fPVnSPHBAqi7FaQP3wKXtz1/zB236USXFGFZsvwyU9+//Kn4AKQ1i3mfk+k4AAAAASUVORK5CYII='
 ICON_AMBER='iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAACXBIWXMAAA7DAAAOwwHHb6hkAAAAGXRFWHRTb2Z0d2FyZQB3d3cuaW5rc2NhcGUub3Jnm+48GgAAAbpJREFUSIntlT9rU1EYh59f7i2YBntvhk4OKbi4VXAWOgTSgt/ASVu1NiUgtWiHOujgPxwMjVKxFAW/gdRcXQqdO7g5SZcOUtTeiFVIcl+HJJI2UWOabP1N58A5z3PeczjnyMzoZ2J9pQNuoxFk/RXDxnoBFVrPFHYnoakCw8aBVA/4qToLaKqgnk/jhfDkYejFrLfd3O/7GRwJjgQ9FAhCwDsUTRLg1Vn7BcAWkFibTXZ9m4vTfgpIGHxsEZgoAjhEF7sVoGgSQNRY+wRu2XkBlMw0H+SSo//LXssmTyPNAWHkuC9bBOnlL6GkS2Bxq0bvghk/3Sk8mPHTMaK3YHFDUxP5z6XfRR38cIpZ7xrwAHCAV5WofPPc071t2uT11cETbmzgHnAeqAquZwrh4+YxLYLaiobOmvQMOAV8N3Q3vhc+Glu1nwDrF3Tsx6A3J2wBSAAfZHY586S0cZDVVgCweUUDO+7QrOCWgQ9sGZoHEPYQGBHsGtwerpSWzixbuR3nj4JG3uSOD6uqO6ApatsGUAV7bo4tTuS/7fxt/j8FjQS55KhVovsAcmM3Mvmv7zuZ17Gg2/T9LfoFaHKWEQZ4uboAAAAASUVORK5CYII=,iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAACXBIWXMAAA7DAAAOwwHHb6hkAAAAGXRFWHRTb2Z0d2FyZQB3d3cuaW5rc2NhcGUub3Jnm+48GgAAAbVJREFUSIntlT9rU1Echp9fciuGG6kVxMEhgotbBV2FSnNL0vYbdLPVyUVqUQcddPAfDoJTqUMFv0FyGxqlBVcd3JykS4fiYFNzsNh78zo0gdAbNabJ1nc6/37Pw+FwzjFJDDKpgdIBr9Vw5eC1jLF+QE2s+1PVWWjbgVIUgFwf+LkmC2jbwb6arWyxev4w9PpKsNneH/gZHAmOBP0UiJqJ4cPhzEwMI2oJgbANgb8bjvd8m7crhZzAN/iaEBiNCkBkdq1XgdeIZgFkVBKCvWO2DOwgW3Clwuj/wl04cRGYB2q/GHqTEIzkqzXgOpBRKq66cpDvGl4O8kKrQAbT3KliuNOas4MfjguDW4JnQFrordfQ3cz0+0065Gdp/GyUsieGzQCxYbf9ydWX7WsSAoAf5fwVM1sELhg4icdZP3rB2NouAOtXj9edN2/GPYEPfJF048TUuw8HWR0FAHy6POS2Rm4KHgAnDW3IWNgv4rmwc8C2wUP/zPdXXPq41wnzZ0Ez9ZXJ0yh6BJoD0s3hGGwJ8+5ni+G3v9X/U9CKKxVGlY6fAlicvuNPVz53U9e1oNcM/C36DZw9ngMv/autAAAAAElFTkSuQmCC'
 ICON_RED='iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAACXBIWXMAAA7DAAAOwwHHb6hkAAAAGXRFWHRTb2Z0d2FyZQB3d3cuaW5rc2NhcGUub3Jnm+48GgAAAblJREFUSIntlT1PFFEUhp+zHwbcAhsqiyWxscPwMaMmJJBQDBJ/gR0glY1BohZaaOEHoTCxMlpIwi8gwYkUkJDgzrCa2FEZGgpD45KoBHb2tWDWbHZXWJfdjre6k9zzPPfcm3vHJNHOJNpKB1LlQeB675ANt4RqWnMDfxIqO5B5QLYF+GzMAio6iPPdDT9cOg09cMZ2Kr/bfgZngjNBKwVSAeg6Fc3MgK6YVSUwtoHMRt9407c5d9XLAhmwbzUCYT5AMhVNNCuwiMmjtcqvEaRLxffAHths6Hq9/wvfdMavADNAQcnEQo2gP79SELoNdCJbyTneaKPwnOONitLHuHbKzS3v/e2q+ocTDo7dlfESSAKLpVTqwbWNpR3q5NP1mxcTxeJz4BYQge65of+qck6NACB0vSHJ3gCXgZ8ye7Z//vf88OrqPsDayEhHx6/OGZMeAhlgy0zTTuCvV7PqCgA+DwykI+u+I9NjsAvANrLZuGoO6AH9MNmTpHZf9+fzh/U4/xSUs953o/tcWk8RUxxtG0CE8fbg0B4NfVnePa7+REE5oev1SvYCwEz3ncD/2khdw4Jm0/a36A8MjJtkNbcccQAAAABJRU5ErkJggg==,iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAACXBIWXMAAA7DAAAOwwHHb6hkAAAAGXRFWHRTb2Z0d2FyZQB3d3cuaW5rc2NhcGUub3Jnm+48GgAAAYhJREFUSIntlT1LglEYhq9HExSHImhqMGhpsz8QNDT0H5pKKzUJoiLfsqIP0oqGJDKjiIL+g9QS9AvamqKlIYLIIBDC92lQw/KtzI/Nezpfz3VxOJxzRFVpZGwNpQMtn62gcQz014l7RTLmg687GAQ8dYB7CiygdAf5PJKMddeEDxoPpd2Gn0FT0BTUV5BBaK2JJiIFRsZKcI/iJhyt/jYHIh4UN8qdhUDSAJjmSNUCFV8eRbpcYJqnwCuqswQi3n/DJxZ6EZ0GMjicZ+WCVDwDOgq4ELkkZAxUDA8ZA5jmBeBCxU9i+bU4JWUfTtCYArYAO8o5Yo+QXH/AKsFoJ5qLIwwBOVRnOIjvli4pFwCE5vtQPQR6EN5QYmSdO5wsZwEYXnHizE4jGChu4BaRMfY3rr+jrAUA4+MObO1hVJcQaQPuUZktVG0DXai+ILKK+bxHKvVuhflZUMzkfAfvrIH6AXthNAdyhINFEhtPv5X/LSgmEPEitk0A1JzjIH5TSVnlgirT8LfoA1OHgdGPBNYpAAAAAElFTkSuQmCC'
-ICON_MUTED='iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAACXBIWXMAAA7DAAAOwwHHb6hkAAAAGXRFWHRTb2Z0d2FyZQB3d3cuaW5rc2NhcGUub3Jnm+48GgAAAa5JREFUSIntlT9LG2Ecxz+/ywUMqdilk0OELm72DRQ6OPgeupTGHoLekKRH6tCKOmh65k+5RiS0oILvQewi+ArcOhUXh9KlpxUKyd2vgxeIXmzTmGz5Ts/fz4cfD8/ziKoyzBhDpQNmu+FW6p+BZwPiHjv5xSzcrGAOyAwAnolYQEcFUb47+cXH96G7lfp5Z3/oZzASjASDFfjAxD15EjH8mEBFzoB0uVzv+zZv1nYyQFpFv8UEhuohQAgv+xUkgiAb0Q5jgqCZ3AMuEJxSxZv5X7hb236CUAD8lBnsxwTFouWL8ApIGRhftmrebK/wrZo3S6hHQEpV5m3bvmjPye0Pxy1v5xB9DyRADkwx3uRyC+d0SbW6M9nScBP0ORCg+topLH3oXBMTALhV7ylqNIBp4ErQjavLB+WVlRe/AVZXd8fS478KiiwDaeArElpOzj65zeoqAGg0Gkn/srWE6DvgIXCmKg6AiLrAFPATlbWJcfOjZVnNbpw7Be1seN4js2msA/NAIhoOgE+tZPh22bZ//G3/PwXtlCreTAKjdE0Pi8W8fdrLvp4F/Wbob9Ef/w2UAwPEy78AAAAASUVORK5CYII=,iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAACXBIWXMAAA7DAAAOwwHHb6hkAAAAGXRFWHRTb2Z0d2FyZQB3d3cuaW5rc2NhcGUub3Jnm+48GgAAAbNJREFUSIntlT9LW1EYh5839xYNAe0iHTqk4NJNv4Dg4NCCYDpcEpslVM3UpVhRBzvUoVVxKHQKFqJgvDeBJgEHsYvQT9CtU3FxEJfegGjpzX1dbmg0qcaYbP6m8/d5OOdwzhFVpZsJdZUOmLXCjl36gjDaEapyMJmITUH9CoRnQLQD+GjAAupWEOR4Mh4bvAt9xykd1de7fgb3gntBZwUu0H9HngQMt0GgcAhEcrmvbd9m2y5FgQgivxoEIdU9ADGMV+0KfJgC0IB1SWAY3iZQAZ1znOLQbeG5QmlYhFnAVa9nq0FgWZaLMAOEfeRbLl8eaxmeL4+Jzz4QFpXpZPJ5pdYnVz8c2y6/UdFVwEDZNg1zwbLGj2iSQmH3sVf1PiIkgarC25fx2Kf6MQ2CQDKiQgb0KXAK+uHPmbueSqXOAbLZbG9PuH8WZBGIgPwUJZ1ITHy/ymoqAMhkMg/6+h69VtF3wEPgUFTmAFR0DXgC/BaV95XK8ed0Ov23Gee/gn/bUBjwfHMZZBowguYq6IYZ8pYsyzq5bv6NglocpzjkIysAIXQ+Hn/xo5V5LQvaTdffogsvmJdO62KNRwAAAABJRU5ErkJggg=='
 # END SHIELD ICONS
 
 render_bar() {
@@ -437,16 +437,19 @@ render_bar() {
 		printf '%s | color=%s\n' "${BAR_PREFIX}${legacy}" "$legacy_color"
 		return
 	fi
+	# The neutral shields are templates, tinted by macOS to match the menu bar
+	# like the system icons beside them; a coloured one has to be a plain image.
+	kind=image
 	case $icon in
-	connected) graphic=$ICON_NORMAL ;;
+	connected) graphic=$ICON_NORMAL kind=templateImage ;;
 	transition | unknown) graphic=$ICON_AMBER ;;
 	stuck) graphic=$ICON_RED ;;
-	off) graphic=$ICON_MUTED ;;
+	off) graphic=$ICON_MUTED kind=templateImage ;;
 	*) graphic=$ICON_RED ;;
 	esac
 	# SwiftBar renders the image even with an empty item title. The tooltip and
 	# the first menu row carry the full state for a user who cannot read the icon.
-	printf ' | image=%s tooltip=%s\n' "$graphic" "$status"
+	printf ' | %s=%s tooltip=%s\n' "$kind" "$graphic" "$status"
 }
 
 # Colour follows the tunnel's state, never the minutes left: a healthy session
@@ -537,7 +540,12 @@ record_event() {
 	printf '%s\t%s\t%s\n' "$(date +%Y-%m-%dT%H:%M:%S%z)" "$1" "$3" >>"$HISTORY_FILE" 2>/dev/null
 	trim_history
 	event_unlock
-	capture_incident "$1"
+	# Detached, because SwiftBar shows the output of whichever run exits last:
+	# a capture held the tick that saw a transition open for seconds, so the
+	# tick that saw the session come back finished first and the bar went back
+	# to the transition until the next refresh.
+	capture_incident "$1" </dev/null >/dev/null 2>&1 &
+	[ -z "${VPN_ETA_TEST_WAIT:-}" ] || wait
 	return 0
 }
 
@@ -1511,7 +1519,7 @@ if [ -z "$remaining" ] && [ "$bare_state" != Connected ]; then
 			fi
 			/usr/bin/lockf -t 0 -k "$STATE_DIR/auto.lock" "$0" auto-connect </dev/null >/dev/null 2>&1 &
 			# The suite counts attempts right after this run returns.
-			[ -z "${VPN_ETA_TEST_AUTO_WAIT:-}" ] || wait
+			[ -z "${VPN_ETA_TEST_WAIT:-}" ] || wait
 			if [ -n "$signing_in" ]; then
 				render_bar transition 'connecting…' orange 'VPN connecting'
 				echo "---"

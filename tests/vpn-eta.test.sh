@@ -87,25 +87,29 @@ check "connected shows the countdown" "VPN 2h 51m | color=green" "$(first_line "
 icon_out=$(VPN_ETA_BAR_MODE=icon VPN_ETA_TEST_STATS=$CONNECTED "$PLUGIN")
 icon_line=$(first_line "$icon_out")
 check "icon mode has no menu-bar label" "true" \
-	"$([[ $icon_line == ' | image='* ]] && echo true || echo false)"
+	"$([[ $icon_line == ' | templateImage='* ]] && echo true || echo false)"
 check "icon mode names the state in its tooltip" "true" \
 	"$([[ $icon_line == *'tooltip=VPN 171m remaining' ]] && echo true || echo false)"
 check "icon mode still shows the countdown in the menu" "true" \
 	"$([[ $icon_out == *'2h 51m remaining'* ]] && echo true || echo false)"
 default_line=$(VPN_ETA_TEST_STATS=$CONNECTED env -u VPN_ETA_BAR_MODE "$PLUGIN" | head -1)
 check "icon mode is the default" "true" \
-	"$([[ $default_line == ' | image='* ]] && echo true || echo false)"
-connected_icon=${icon_line#*image=}
-connected_icon=${connected_icon%%,*}
+	"$([[ $default_line == ' | templateImage='* ]] && echo true || echo false)"
+connected_icon=${icon_line#*mage=}
+connected_icon=${connected_icon%%[, ]*}
 off_line=$(VPN_ETA_BAR_MODE=icon VPN_ETA_TEST_STATS=$DISCONNECTED "$PLUGIN" | head -1)
-off_icon=${off_line#*image=}
-off_icon=${off_icon%%,*}
+off_icon=${off_line#*mage=}
+off_icon=${off_icon%%[, ]*}
 check "disconnect changes shield colour" "false" \
 	"$([ "$connected_icon" = "$off_icon" ] && echo true || echo false)"
+# A light/dark pair is picked by SwiftBar's guess at the appearance, which has
+# drawn white ink on a light menu bar; a template is tinted by macOS itself.
+check "the off shield is tinted by macOS too" "true" \
+	"$([[ $off_line == ' | templateImage='* ]] && echo true || echo false)"
 critical_line=$(VPN_ETA_BAR_MODE=icon VPN_ETA_TEST_STATS='    Connection State:            Connected
     Session Disconnect:          11 Minutes Remaining' "$PLUGIN" | head -1)
-critical_icon=${critical_line#*image=}
-critical_icon=${critical_icon%%,*}
+critical_icon=${critical_line#*mage=}
+critical_icon=${critical_icon%%[, ]*}
 check "minutes left do not change the shield colour" "true" \
 	"$([ "$connected_icon" = "$critical_icon" ] && echo true || echo false)"
 icon_state=$STATE_DIR/icon-estimate
@@ -116,10 +120,12 @@ estimated_line=$(SWIFTBAR_PLUGIN_DATA_PATH="$icon_state" VPN_ETA_BAR_MODE=icon \
 	VPN_ETA_TEST_IFCONFIG='utun1: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 1300
     inet 10.3.3.3 --> 10.3.3.3 netmask 0xffffffff' \
 	VPN_ETA_TEST_STATS=$NOT_ATTACHED "$PLUGIN" | head -1)
-estimated_icon=${estimated_line#*image=}
-estimated_icon=${estimated_icon%%,*}
+estimated_icon=${estimated_line#*mage=}
+estimated_icon=${estimated_icon%%[, ]*}
 check "an estimated deadline changes shield colour" "false" \
 	"$([ "$connected_icon" = "$estimated_icon" ] && echo true || echo false)"
+check "a coloured shield stays a plain image" "true" \
+	"$([[ $estimated_line == ' | image='* ]] && echo true || echo false)"
 
 out=$(VPN_ETA_TEST_STATS='    Connection State:            Connected
     Session Disconnect:          58 Minutes Remaining' "$PLUGIN")
@@ -874,6 +880,7 @@ cat >"$FAKE_LOG" <<'FAKE'
 #!/bin/sh
 # Stands in for /usr/bin/log, which prints a header before any rows — and prints
 # it even when it matched nothing, which is the case worth telling apart.
+[ -n "${FAKE_LOG_SLEEP:-}" ] && sleep "$FAKE_LOG_SLEEP"
 printf 'Timestamp               Ty Process[PID:TID]\n'
 [ -n "${FAKE_LOG_HEADER_ONLY:-}" ] && exit 0
 printf '2026-01-01 00:00:00 Df vpnagentd[100] gateway 192.0.2.1 is not reachable\n'
@@ -887,7 +894,7 @@ capture() {
 	shift
 	env "$@" VPN_ETA_INCIDENT_LOG=1 VPN_ETA_LOG_BIN="$FAKE_LOG" \
 		VPN_ETA_TEST_STATS="    Connection State:            $state" \
-		VPN_ETA_TEST_PERSIST=1 "$PLUGIN" >/dev/null
+		VPN_ETA_TEST_PERSIST=1 VPN_ETA_TEST_WAIT=1 "$PLUGIN" >/dev/null
 }
 
 # A diagnostic that reads the system log is not something to switch on for
@@ -895,7 +902,7 @@ capture() {
 reset_session_state
 seed_cache 60
 VPN_ETA_TEST_STATS='    Connection State:            Reconnecting' \
-	VPN_ETA_TEST_PERSIST=1 "$PLUGIN" >/dev/null
+	VPN_ETA_TEST_PERSIST=1 VPN_ETA_TEST_WAIT=1 "$PLUGIN" >/dev/null
 check "the capture stays off until it is asked for" "0" "$(incidents)"
 
 reset_session_state
@@ -903,6 +910,27 @@ seed_cache 60
 capture Reconnecting
 check "a transition saves the client's account beside the history" "1" "$(incidents)"
 check "and saves what the client actually said" "1" \
+	"$(grep -rh 'is not reachable' "$STATE_DIR/incidents" 2>/dev/null | wc -l | tr -d ' ')"
+
+# SwiftBar shows whichever run exits last. A tick that held its output open
+# for the capture finished after the tick that saw the session come back, and
+# put the transition back on the bar. $(...) waits for the pipe to close the
+# way SwiftBar does, so a capture that inherited stdout would still be timed.
+reset_session_state
+seed_cache 60
+started=$(date +%s)
+out=$(VPN_ETA_INCIDENT_LOG=1 VPN_ETA_LOG_BIN="$FAKE_LOG" FAKE_LOG_SLEEP=3 \
+	VPN_ETA_TEST_STATS='    Connection State:            Reconnecting' \
+	VPN_ETA_TEST_PERSIST=1 "$PLUGIN")
+elapsed=$(($(date +%s) - started))
+check "the menu does not wait for the capture" "true" \
+	"$([ "$elapsed" -lt 3 ] && [ -n "$out" ] && echo true || echo false)"
+tries=0
+until [ "$tries" -ge 60 ] || grep -rqs 'is not reachable' "$STATE_DIR/incidents"; do
+	sleep 0.1
+	tries=$((tries + 1))
+done
+check "and the capture still lands after it" "1" \
 	"$(grep -rh 'is not reachable' "$STATE_DIR/incidents" 2>/dev/null | wc -l | tr -d ' ')"
 
 # A session that came up needs no explaining, and capturing one would spend
@@ -1161,7 +1189,7 @@ chmod +x "$AUTO_DIR/security" "$AUTO_DIR/vpn"
 export AUTO_DIR
 auto_env=(VPN_ETA_AUTO_CONNECT=1 VPN_ETA_HOST=example.invalid VPN_ETA_USER=demo
 	VPN_ETA_VPN_BIN="$AUTO_DIR/vpn" VPN_ETA_SECURITY_BIN="$AUTO_DIR/security"
-	VPN_ETA_STATE_DIR="$AUTO_DIR/state" VPN_ETA_TEST_PERSIST=1 VPN_ETA_TEST_AUTO_WAIT=1)
+	VPN_ETA_STATE_DIR="$AUTO_DIR/state" VPN_ETA_TEST_PERSIST=1 VPN_ETA_TEST_WAIT=1)
 env "${auto_env[@]}" VPN_ETA_TEST_STATS="$DISCONNECTED" "$PLUGIN" auto-connect >/dev/null
 check "automatic login answers Cisco from Keychain" "success" "$(cat "$AUTO_DIR/result" 2>/dev/null)"
 check "automatic login keeps credentials out of state" "0" \
