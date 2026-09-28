@@ -134,7 +134,13 @@ No plugin change reaches an **open** dropdown: SwiftBar does not process a
 logged by SwiftBar as one burst only after a menu-item click closed the menu,
 so the open menu kept showing `1m remaining` over a session already renewed.
 Check SwiftBar's own log (`perform action for menu item`) before blaming a
-render path for a stale menu.
+render path for a stale menu, and check it the same day: at 03:05 on 2026-09-28
+it held no SwiftBar line at all for 20:38–20:40 the evening before, while 27,000
+other lines from that window survived. After that, a menu click is reconstructed
+from the state it left: Disconnect stamps `expected-teardown` in the same second
+Cisco logs "The user has requested to disconnect", and because it also pauses
+scheduled attempts, an `auto-attempt` that starts after that stamp followed a
+`start-auto` or `resume-auto` click.
 
 Both of those last two are deadlines that suppress a notification, and neither suppresses a
 *log line* — the history is what an unexplained drop is reconstructed from later, and it is
