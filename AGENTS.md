@@ -13,9 +13,11 @@ shellcheck install.sh uninstall.sh docs/make-menu-image.sh \
 	swiftbar/vpn-eta.1m.sh tests/*.sh
 ```
 
-Both suites green and ShellCheck silent, every time. CI runs exactly those plus `bash -n` /
-`sh -n` over every script (`.github/workflows/tests.yml`). Neither suite needs a VPN,
-SwiftBar or the network: both drive a fake Cisco client inside a `mktemp -d` sandbox.
+Both suites green and ShellCheck silent, every time. A user-visible change also
+bumps `VERSION` and `<xbar.version>` in the plugin and opens a `CHANGELOG.md`
+section; the suite checks that the two agree, not that a bump was owed. CI runs
+exactly those plus `bash -n` / `sh -n` over every script
+(`.github/workflows/tests.yml`). Neither suite needs a VPN, SwiftBar or the network: both drive a fake Cisco client inside a `mktemp -d` sandbox.
 
 `tests/install.test.sh` stubs `osascript` and `open` before running the installer,
 so its restart steps cannot quit the user's SwiftBar. Keep those stubs in place:
@@ -52,10 +54,13 @@ actionless dropdown rows so they cannot be selected.
 
 `swiftbar/vpn-eta.1m.sh` renders and runs every action as a standalone Bash file; SwiftBar
 reruns it every minute (the `1m` in the name). At runtime the repository is not there, so a
-committed fix is not running until the copy in SwiftBar's plugin folder is replaced. Before
-reading history or incident logs as evidence against HEAD, `cmp` that copy with
-`swiftbar/vpn-eta.1m.sh`: a duplicate history line on 2026-09-26 came from a copy older than
-the commit that fixed exactly that.
+committed fix is not running until the copy in SwiftBar's plugin folder is replaced.
+A history that stops while Cisco still reports a session means SwiftBar is not running
+the plugin: check `pgrep -x SwiftBar` **and** `defaults read com.ameba.SwiftBar
+DisabledPlugins`. On 2026-09-28 a plugin switched off from SwiftBar's menu was first
+misread as SwiftBar having quit. Before reading history or incident logs as evidence
+against HEAD, `cmp` that copy with `swiftbar/vpn-eta.1m.sh`: a duplicate history line
+on 2026-09-26 came from a copy older than the commit that fixed exactly that.
 `install.sh` also copies `swiftbar/network-watch.swift` into a hidden folder beside the plugin
 and registers a per-user LaunchAgent. It asks SwiftBar to rerun the plugin after macOS network
 changes; the plugin itself still confirms the state through Cisco. A missing watcher leaves the

@@ -1462,6 +1462,9 @@ check "a refusal hands the attempt to the fallback gateway" "example.invalid fal
 	"$(paste -sd' ' "$AUTO_DIR/gateway-hosts")"
 check "the fallback's success ends the attempt" "client-connected" \
 	"$(tail -1 "$AUTO_DIR/gw-state/auto-attempt" | cut -f2)"
+out=$(env "${gw_env[@]}" VPN_ETA_TEST_PERSIST= "$PLUGIN")
+check "the menu's log row reads an attempt in words, not the log's key" "1" \
+	"$(printf '%s\n' "$out" | grep -c '^Session log · sign-in attempt at ')"
 check "the attempt's trace names the switch" "1" \
 	"$(grep -c $'\thost-fallback$' "$AUTO_DIR/gw-state/auto-attempt")"
 

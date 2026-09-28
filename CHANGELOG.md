@@ -3,6 +3,33 @@
 Notable changes. Dates are release dates; the format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.6.0] — 2026-09-28
+
+### Added
+
+- `VPN_ETA_HOST_FALLBACK`: a second gateway that automatic reconnection tries
+  when the first refuses the session. If a one-time code was already spent on
+  the first, it waits for the next code before trying the second.
+- Diagnostics for automatic sign-in. `auto-transcript` keeps what Cisco
+  printed during the latest attempt, with what was typed and any long run of
+  digits redacted before it is written. Each attempt adds an `auto` line to
+  `history.log` naming the gateway, the result, the last stage reached and
+  the time taken. With `VPN_ETA_INCIDENT_LOG=1`, a failed sign-in saves an
+  incident of its own, with the attempt's stages and transcript appended.
+- `connected` lines in `history.log` name the gateway server that holds the
+  session.
+- `VPN_ETA_AUTO_TIMEOUT` sets how long one automatic sign-in may wait for a
+  recognised answer (45 seconds, as before).
+
+### Fixed
+
+- A gateway that refused the session after sign-in ("No assigned address",
+  "rejected the connection attempt", "Could not connect to server") was not
+  recognised: the attempt waited out its 45 seconds, and then paused automatic
+  reconnection as a timeout. It is now recognised at once, and it retries
+  every `VPN_ETA_AUTO_RETRY` seconds with one notification per outage.
+  Credential failures still pause.
+
 ## [1.5.1] — 2026-09-27
 
 ### Fixed

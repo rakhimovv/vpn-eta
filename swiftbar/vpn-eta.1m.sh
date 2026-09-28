@@ -3,12 +3,12 @@
 # <xbar.title>VPN session ETA</xbar.title>
 # <xbar.desc>Shows the server-reported time remaining in the VPN session.</xbar.desc>
 # <xbar.author>Ruslan Rakhimov</xbar.author>
-# <xbar.version>v1.5.1</xbar.version>
+# <xbar.version>v1.6.0</xbar.version>
 
 # The plugin is COPIED into SwiftBar's folder, so the installed file has no link
 # back to the tag it came from. Without this a bug report can name the macOS,
 # SwiftBar and Cisco versions and still not say which vpn-eta is running.
-VERSION=1.5.1
+VERSION=1.6.0
 
 export PATH="/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin"
 
@@ -931,6 +931,7 @@ history_line() {
 			if (event == "unreadable") event = "client silent"
 			else if (event == "transition") event = "changing state"
 			else if (event == "down") event = "dropped"
+			else if (event == "auto") event = "sign-in attempt"
 			printf "%s at %s:%s", event, hm[1], hm[2]
 		}
 	')

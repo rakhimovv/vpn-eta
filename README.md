@@ -279,7 +279,10 @@ one (Russian, Greek, Hebrew) the command arrives transliterated and the shell sa
 not found`. `brew upgrade --cask swiftbar`.
 
 **Nothing in the menu bar.** SwiftBar must be running and pointed at the folder `install.sh`
-printed. Check it against Preferences → General → Plugin Folder.
+printed. Check it against Preferences → General → Plugin Folder. A plugin switched off from
+SwiftBar's own menu stays off across restarts and leaves no trace in `history.log` beyond the
+gap: `defaults read com.ameba.SwiftBar DisabledPlugins` lists it, and
+`open "swiftbar://enableplugin?name=vpn-eta"` switches it back on.
 
 **Red shield with "Cisco Secure Client not found" in the menu.** Set `VPN_ETA_VPN_BIN`.
 
