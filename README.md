@@ -107,6 +107,7 @@ reads no `~/.zshrc`. A variable exported there reaches a terminal run and never 
 | `VPN_ETA_VPN_BIN` | autodetected | The Cisco CLI, if it is not at a standard path. |
 | `VPN_ETA_AUTO_CONNECT` | off | Reconnect after Cisco explicitly reports `Disconnected`. |
 | `VPN_ETA_USER` | unset | AD login used by automatic reconnection. |
+| `VPN_ETA_HOST_FALLBACK` | unset | A second gateway automatic reconnection tries when the first refuses the session. Takes a name or a URL. |
 | `VPN_ETA_AUTO_RETRY` | `300` | Minimum seconds between automatic login attempts. |
 | `VPN_ETA_KEYCHAIN_SERVICE` | `vpn-eta` | Keychain item prefix; use a different value for a second VPN token. |
 | `VPN_ETA_KEYCHAIN_TIMEOUT` | `10` | Seconds allowed for each Keychain read during automatic login. |
@@ -167,6 +168,12 @@ and the shield turns amber. `Refresh status` reads the latest
 recorded stage and seconds elapsed, even if Cisco temporarily cannot return
 session statistics. A successful sign-in sends a
 `VPN connected` notification; a failed one names the reason and pauses retries.
+A refusal from the gateway itself — Cisco's "rejected the connection attempt",
+"No assigned address" or "Could not connect to server" — is a fault on the
+gateway's side, not the login's, so it does not pause: the menu says the gateway
+refused, one notification announces the outage, and the attempt repeats every
+`VPN_ETA_AUTO_RETRY` seconds until a gateway accepts. With
+`VPN_ETA_HOST_FALLBACK` set, a refused attempt tries that gateway before waiting.
 After 75 seconds without a result, the shield turns red and the menu says `login delayed…` rather than
 silently looking idle. A progress marker older than five minutes expires.
 The separate `🔑 Start manually (SMS or TOTP)…` item opens Cisco's

@@ -115,6 +115,15 @@ and a single overwritten `auto-attempt` stage trace (no credentials).
 It runs only after an explicit Cisco `Disconnected`, under `lockf`, and a failed
 login pauses further attempts. Manual Start and Disconnect also pause it, so an
 SMS fallback or intentional teardown cannot race the next scheduled tick.
+The one failure that does not pause is the gateway's own refusal: `auto_login`
+exits 18 on it (`gateway-rejected` in the trace), and the attempt is retried on
+the ordinary backoff, announced only when the previous trace did not already end
+in `failed-gateway-rejected`. On 2026-09-28 the gateway redirected to a node that
+answered `503, No assigned address` after the credentials were sent, and the
+expect script, blind to it, waited 45 s and paused as `timeout`. Before handing
+such an attempt to `VPN_ETA_HOST_FALLBACK` the plugin waits out the TOTP window
+if credentials were already submitted, so the second gateway is not offered a
+code the first already spent.
 The `start-auto` menu action takes the same lock, rechecks Cisco's state, then
 clears pause/retry inside the lock before a single Keychain login attempt.
 The in-progress renderer reads only unfinished stages from `auto-attempt` and

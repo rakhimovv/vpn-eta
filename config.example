@@ -30,6 +30,9 @@
 # Disconnect pauses this mode until you choose Resume automatic connection.
 #VPN_ETA_AUTO_CONNECT=1
 #VPN_ETA_USER="your.ad.login"
+# A second gateway to try when the first refuses the session (for example
+# "No assigned address"). Passed to Cisco untouched, like VPN_ETA_HOST.
+#VPN_ETA_HOST_FALLBACK="vpn-ha.example.com"
 #VPN_ETA_AUTO_RETRY=300
 #VPN_ETA_KEYCHAIN_SERVICE="vpn-eta"
 #VPN_ETA_KEYCHAIN_TIMEOUT=10

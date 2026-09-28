@@ -809,6 +809,11 @@ auto_button() {
 		manual) echo "Automatic reconnection paused after manual action | size=11" ;;
 		*) echo "Automatic sign-in paused after an unsuccessful attempt | size=11" ;;
 		esac
+	else
+		case $(tail -1 "$AUTO_ATTEMPT_FILE" 2>/dev/null) in
+		*$'\t'failed-gateway-rejected)
+			echo "Cisco gateway refused the connection — retrying automatically | size=11" ;;
+		esac
 	fi
 	if [ "${1-}" = confirmed-disconnected ]; then
 		if [ -e "$AUTO_PAUSE_FILE" ]; then
@@ -837,7 +842,8 @@ load_auto_progress() {
 	case $started in '' | *[!0-9]*) return 1 ;; esac
 	case $progress_stage in
 	attempt-started | client-started | preauth-disconnected | username-prompt | password-prompt | \
-	keychain-pin-read | keychain-totp-read | totp-generated | credentials-submitted) ;;
+	keychain-pin-read | keychain-totp-read | totp-generated | credentials-submitted | \
+	gateway-rejected | host-fallback) ;;
 	*) return 1 ;;
 	esac
 	progress_age=$(( $(now_epoch) - started ))
@@ -848,6 +854,7 @@ load_auto_progress() {
 	keychain-pin-read | keychain-totp-read) progress_detail="Reading Keychain" ;;
 	totp-generated) progress_detail="Preparing the one-time code" ;;
 	credentials-submitted) progress_detail="Waiting for Cisco to confirm" ;;
+	gateway-rejected | host-fallback) progress_detail="Trying the fallback gateway" ;;
 	esac
 }
 
@@ -1042,8 +1049,11 @@ start_new_session() {
 # at that prompt so a slow connection cannot consume most of its 30-second life.
 # Keychain items are read only in this opt-in path; neither value enters argv,
 # a file, the SwiftBar output, or the connection history.
+# Exit status is the connector contract a VPN_ETA_AUTO_CONNECT_BIN fake follows:
+# 0 connected, 10-17 a failure that pauses, 18 the gateway refused the session
+# (no address left, unreachable) — a fault on its side that is worth retrying.
 auto_login() {
-	VPN_ETA_AUTO_VPN=$VPN VPN_ETA_AUTO_HOST=$VPN_ETA_HOST \
+	VPN_ETA_AUTO_VPN=$VPN VPN_ETA_AUTO_HOST=$1 \
 		VPN_ETA_AUTO_USER=$VPN_ETA_USER \
 		VPN_ETA_AUTO_KEYCHAIN=$KEYCHAIN_SERVICE \
 		VPN_ETA_AUTO_KEYCHAIN_TIMEOUT=$KEYCHAIN_TIMEOUT \
@@ -1065,6 +1075,10 @@ spawn -noecho $env(VPN_ETA_AUTO_VPN) connect $env(VPN_ETA_AUTO_HOST)
 expect {
 	-re {([Aa]uthentication [Ff]ailed|[Ll]ogin [Ff]ailed)} { trace_stage login-rejected; exit 13 }
 	-re {[Ss]tate:[ \t]*[Cc]onnected} { trace_stage client-connected; exit 0 }
+	-re {(rejected the connection attempt|No assigned address|[Cc]ould not connect to server|[Cc]onnection attempt has failed)} {
+		trace_stage gateway-rejected
+		exit 18
+	}
 	-re {[Ss]tate:[ \t]*[Dd]isconnected} {
 		if {$answered} { trace_stage client-disconnected; exit 14 }
 		trace_stage preauth-disconnected
@@ -1104,6 +1118,17 @@ expect {
 	timeout { trace_stage timeout; exit 15 }
 }
 EXPECT
+}
+
+# One sign-in against one gateway; the result lands in auto_rc.
+run_auto_connector() {
+	if [ -n "${VPN_ETA_AUTO_CONNECT_BIN:-}" ]; then
+		"$VPN_ETA_AUTO_CONNECT_BIN" "$1" "$VPN_ETA_USER" >/dev/null 2>&1
+		auto_rc=$?
+	else
+		auto_login "$1" >/dev/null 2>&1
+		auto_rc=$?
+	fi
 }
 
 # Whether the retry backoff would let a scheduled attempt start now.
@@ -1154,17 +1179,27 @@ auto_connect_session() {
 	now=$(now_epoch)
 	printf '%s\n' "$now" >"$AUTO_RETRY_FILE" || return 1
 	[ ! -e "$AUTO_PAUSE_FILE" ] || return 0
+	# Read before the trace is overwritten: an outage already announced is
+	# retried quietly, so a gateway down for an hour notifies once, not 12 times.
+	gateway_down_before=
+	case $(tail -1 "$AUTO_ATTEMPT_FILE" 2>/dev/null) in
+	*$'\t'failed-gateway-rejected) gateway_down_before=1 ;;
+	esac
 	umask 077
 	printf '%s\tattempt-started\n' "$now" >"$AUTO_ATTEMPT_FILE" || return 1
 	chmod 600 "$AUTO_ATTEMPT_FILE" || return 1
 	refresh_menu_bar
-	notify "VPN connecting" "Automatic sign-in started; watch for a result notification."
-	if [ -n "${VPN_ETA_AUTO_CONNECT_BIN:-}" ]; then
-		"$VPN_ETA_AUTO_CONNECT_BIN" "$VPN_ETA_HOST" "$VPN_ETA_USER" >/dev/null 2>&1
-		auto_rc=$?
-	else
-		auto_login >/dev/null 2>&1
-		auto_rc=$?
+	[ -n "$gateway_down_before" ] ||
+		notify "VPN connecting" "Automatic sign-in started; watch for a result notification."
+	run_auto_connector "$VPN_ETA_HOST"
+	if [ "$auto_rc" -eq 18 ] && [ -n "${VPN_ETA_HOST_FALLBACK:-}" ]; then
+		# A one-time code the first gateway accepted may be refused as a replay
+		# by the second, turning its outage into a login failure that pauses.
+		if grep -q $'\tcredentials-submitted$' "$AUTO_ATTEMPT_FILE" 2>/dev/null; then
+			sleep $((30 - $(now_epoch) % 30 + 1))
+		fi
+		printf '%s\thost-fallback\n' "$(now_epoch)" >>"$AUTO_ATTEMPT_FILE"
+		run_auto_connector "$VPN_ETA_HOST_FALLBACK"
 	fi
 	if [ "$auto_rc" -eq 0 ]; then
 		if [ -n "${VPN_ETA_AUTO_CONNECT_BIN:-}" ]; then
@@ -1176,6 +1211,14 @@ auto_connect_session() {
 		# refreshes on its own way out.
 		[ "$mode" = explicit ] || refresh_menu_bar
 		return 0
+	fi
+	if [ "$auto_rc" -eq 18 ]; then
+		printf '%s\tfailed-gateway-rejected\n' "$(now_epoch)" >>"$AUTO_ATTEMPT_FILE"
+		[ -n "$gateway_down_before" ] ||
+			notify "VPN gateway refused the connection" \
+				"Cisco's gateway is not accepting sessions; retrying every $(mute_span $(((AUTO_RETRY_SECONDS + 59) / 60)))."
+		[ "$mode" = explicit ] || refresh_menu_bar
+		return 1
 	fi
 	case $auto_rc in
 	10) pause_reason=keychain-pin ;;

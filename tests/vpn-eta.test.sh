@@ -1175,6 +1175,13 @@ connect)
 		printf '>> Login failed.\nUsername: [demo] '
 		exit 2
 	fi
+	# What the 2026-09-28 outage looked like: authentication succeeded and the
+	# gateway had no address to give, and the client then sat there.
+	if [ "${FAKE_VPN_GATEWAY_REJECT:-}" = 1 ]; then
+		printf '>> error: The secure gateway has rejected the connection attempt.  A new connection attempt to the same or another secure gateway is needed, which requires re-authentication. The following message was received from the secure gateway: No assigned address\n'
+		read -r -t 60 _
+		exit 2
+	fi
 	if [[ $user = demo && $pass =~ ^12345[0-9]{6}$ ]]; then
 		printf 'success\n' >"$AUTO_DIR/result"
 		printf '>> state: Connected\n'
@@ -1254,6 +1261,19 @@ check "Cisco login rejection has a specific pause reason" "login-rejected" \
 	"$(cat "$AUTO_DIR/reject-state/auto-paused" 2>/dev/null)"
 check "the failed attempt records its final phase" "1" \
 	"$(grep -c 'failed-login-rejected' "$AUTO_DIR/reject-state/auto-attempt")"
+
+# A gateway out of addresses is its fault, not the credentials': the attempt
+# ends as soon as Cisco says so, and retries rather than pausing.
+gateway_started=$(date +%s)
+env "${auto_env[@]}" VPN_ETA_STATE_DIR="$AUTO_DIR/gateway-state" \
+	FAKE_VPN_GATEWAY_REJECT=1 VPN_ETA_TEST_STATS="$DISCONNECTED" \
+	"$PLUGIN" start-auto >/dev/null
+check "a gateway refusal is recognised, not waited out" "true" \
+	"$([ $(($(date +%s) - gateway_started)) -lt 30 ] && echo true || echo false)"
+check "a gateway refusal records its own phase" "1" \
+	"$(grep -c $'\tgateway-rejected$' "$AUTO_DIR/gateway-state/auto-attempt")"
+check "a gateway refusal does not pause automatic login" "false" \
+	"$([ -e "$AUTO_DIR/gateway-state/auto-paused" ] && echo true || echo false)"
 
 cat >"$AUTO_DIR/security-lab" <<'FAKE'
 #!/bin/bash
@@ -1355,6 +1375,47 @@ env "${auto_env[@]}" VPN_ETA_AUTO_CONNECT_BIN="$AUTO_DIR/fail-connect" \
 	VPN_ETA_TEST_STATS="$DISCONNECTED" "$PLUGIN" >/dev/null
 check "a failed automatic login pauses retries" "true" \
 	"$([ -e "$AUTO_DIR/state/auto-paused" ] && echo true || echo false)"
+
+# Exit 18 is the connector's "the gateway refused": retried on the backoff,
+# announced once per outage, and handed to the fallback gateway when one is set.
+cat >"$AUTO_DIR/gateway-connect" <<'FAKE'
+#!/bin/bash
+printf '%s\n' "$1" >>"$AUTO_DIR/gateway-hosts"
+[ "$1" = fallback.invalid ] && exit 0
+exit 18
+FAKE
+chmod +x "$AUTO_DIR/gateway-connect"
+gw_env=("${auto_env[@]}" VPN_ETA_STATE_DIR="$AUTO_DIR/gw-state"
+	VPN_ETA_NOTIFY_SINK="$AUTO_DIR/gw-notifications"
+	VPN_ETA_AUTO_CONNECT_BIN="$AUTO_DIR/gateway-connect" VPN_ETA_TEST_STATS="$DISCONNECTED")
+: >"$AUTO_DIR/gateway-hosts"
+env "${gw_env[@]}" "$PLUGIN" >/dev/null
+check "a refusing gateway leaves automatic login unpaused" "false" \
+	"$([ -e "$AUTO_DIR/gw-state/auto-paused" ] && echo true || echo false)"
+check "without a fallback only the configured gateway is tried" "example.invalid" \
+	"$(paste -sd' ' "$AUTO_DIR/gateway-hosts")"
+check "the refusal ends the attempt's trace" "failed-gateway-rejected" \
+	"$(tail -1 "$AUTO_DIR/gw-state/auto-attempt" | cut -f2)"
+out=$(env "${gw_env[@]}" VPN_ETA_TEST_PERSIST= "$PLUGIN")
+check "the menu says the gateway refused and a retry is coming" "1" \
+	"$(printf '%s\n' "$out" | grep -c '^Cisco gateway refused the connection — retrying automatically | size=11$')"
+check "the first refusal is announced" "1" \
+	"$(grep -c 'VPN gateway refused the connection' "$AUTO_DIR/gw-notifications")"
+rm -f "$AUTO_DIR/gw-state/auto-retry"
+env "${gw_env[@]}" "$PLUGIN" >/dev/null
+check "the refusing gateway is retried after the backoff" "2" \
+	"$(wc -l <"$AUTO_DIR/gateway-hosts" | tr -d ' ')"
+check "a continuing outage is not announced again" "2" \
+	"$(wc -l <"$AUTO_DIR/gw-notifications" | tr -d ' ')"
+: >"$AUTO_DIR/gateway-hosts"
+rm -f "$AUTO_DIR/gw-state/auto-retry"
+env "${gw_env[@]}" VPN_ETA_HOST_FALLBACK=fallback.invalid "$PLUGIN" >/dev/null
+check "a refusal hands the attempt to the fallback gateway" "example.invalid fallback.invalid" \
+	"$(paste -sd' ' "$AUTO_DIR/gateway-hosts")"
+check "the fallback's success ends the attempt" "client-connected" \
+	"$(tail -1 "$AUTO_DIR/gw-state/auto-attempt" | cut -f2)"
+check "the attempt's trace names the switch" "1" \
+	"$(grep -c $'\thost-fallback$' "$AUTO_DIR/gw-state/auto-attempt")"
 out=$(env "${auto_env[@]}" VPN_ETA_HOST= VPN_ETA_STATE_DIR="$AUTO_DIR/incomplete-state" \
 	VPN_ETA_TEST_STATS="$DISCONNECTED" "$PLUGIN")
 check "missing automatic-login settings are shown in the menu" "1" \
