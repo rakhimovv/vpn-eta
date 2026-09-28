@@ -111,7 +111,14 @@ logged one change twice. A run that has waited about two seconds takes the lock 
 silence the history.
 
 Automatic reconnection adds `auto-retry`, `auto-paused`, a retained `auto.lock`,
-and a single overwritten `auto-attempt` stage trace (no credentials).
+and a single overwritten `auto-attempt` stage trace (no credentials), plus an
+`auto-transcript` of what Cisco printed. The transcript is redacted inside the
+expect script, before anything reaches the disk, by the exact strings sent and by
+any run of five or more digits; the suite's fake terminal echoes the password so
+that the redaction is exercised, not assumed. Each connector run appends an `auto`
+line through `history_note`, which takes the event lock but never touches
+`last-event`: an attempt is an action, not a state, and letting it replace the
+key would re-log the `disconnected` it happened inside on the next tick.
 It runs only after an explicit Cisco `Disconnected`, under `lockf`, and a failed
 login pauses further attempts. Manual Start and Disconnect also pause it, so an
 SMS fallback or intentional teardown cannot race the next scheduled tick.

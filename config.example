@@ -36,6 +36,7 @@
 #VPN_ETA_AUTO_RETRY=300
 #VPN_ETA_KEYCHAIN_SERVICE="vpn-eta"
 #VPN_ETA_KEYCHAIN_TIMEOUT=10
+#VPN_ETA_AUTO_TIMEOUT=45
 
 # ── What the menu bar shows ──────────────────────────────────────────────────
 

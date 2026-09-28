@@ -111,6 +111,7 @@ reads no `~/.zshrc`. A variable exported there reaches a terminal run and never 
 | `VPN_ETA_AUTO_RETRY` | `300` | Minimum seconds between automatic login attempts. |
 | `VPN_ETA_KEYCHAIN_SERVICE` | `vpn-eta` | Keychain item prefix; use a different value for a second VPN token. |
 | `VPN_ETA_KEYCHAIN_TIMEOUT` | `10` | Seconds allowed for each Keychain read during automatic login. |
+| `VPN_ETA_AUTO_TIMEOUT` | `45` | Seconds one automatic sign-in may go without a recognised answer from Cisco before it gives up and pauses. |
 | `VPN_ETA_TIMEOUT` | `12` | Seconds to wait for one CLI call. |
 | `VPN_ETA_STALE_LIMIT` | `45` | Minutes an extrapolated countdown stays trustworthy. |
 | `VPN_ETA_TRANSITION_LIMIT` | `5` | Minutes one reconnect may run before it counts as stuck rather than settling. `0` never escalates. |
@@ -220,7 +221,11 @@ relying on it for unattended work.
 The latest attempt's non-secret stages are kept in `auto-attempt` beside `history.log`
 (mode `0600`); they show whether Cisco reached the username prompt, Keychain was read,
 and the client accepted or rejected the login. The menu shows the pause reason after
-an unsuccessful attempt. Neither file contains the PIN, TOTP key or generated code.
+an unsuccessful attempt. Beside it, `auto-transcript` (also `0600`) keeps what
+Cisco printed during that attempt, headed by the gateway tried and the addresses its
+name resolved to — the one record of a reply no rule here recognises. What was typed is
+replaced by `[redacted]` and any run of five or more digits by `[digits]` before the
+line is written. None of these files contains the PIN, TOTP key or generated code.
 
 ## Notifications and the log
 
@@ -244,7 +249,13 @@ per-minute plugin does not fill a log with "still up". `🕘 Session log` opens 
 
 ```
 2026-08-24T20:11:48+0300	disconnected	state=Disconnected last_remaining=1290m
+2026-08-24T20:12:02+0300	auto	host=vpn.example.com result=gateway-rejected reached=credentials-submitted after=41s
+2026-08-24T20:17:05+0300	connected	remaining=1439m server=192.0.2.160
 ```
+
+`connected` names the gateway node serving the session: the name you connect to is often a
+load balancer, and an outage can be one node's. Each automatic sign-in adds an `auto` line —
+which gateway, the result, the last stage it reached and how long it took.
 
 Those timestamps make Cisco's own account findable: `log show --start "2026-08-24 20:00:00"
 --predicate 'process == "vpnagentd"'` names the reason outright. Use the full
@@ -257,7 +268,8 @@ were still there in full, and the store as a whole still reached back thirteen d
 messages out on a schedule of its own and the VPN client's are on a short one, so the history line
 survives and the reason behind it does not. Set `VPN_ETA_INCIDENT_LOG=1` and each reconnect, drop
 or unreadable reply saves its previous fifteen minutes into `incidents/` beside `history.log`,
-keeping the newest `VPN_ETA_INCIDENT_KEEP` and deleting the rest.
+keeping the newest `VPN_ETA_INCIDENT_KEEP` and deleting the rest. A failed automatic sign-in
+saves one too (`…-auto-<reason>.log`), with that attempt's stages and transcript appended.
 
 ## Troubleshooting
 

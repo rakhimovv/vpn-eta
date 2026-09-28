@@ -1182,6 +1182,12 @@ connect)
 		read -r -t 60 _
 		exit 2
 	fi
+	# Something no pattern knows, followed by silence: the timeout case.
+	if [ "${FAKE_VPN_MYSTERY:-}" = 1 ]; then
+		printf '>> error: A reply nobody has seen before.\n'
+		read -r -t 60 _
+		exit 2
+	fi
 	if [[ $user = demo && $pass =~ ^12345[0-9]{6}$ ]]; then
 		printf 'success\n' >"$AUTO_DIR/result"
 		printf '>> state: Connected\n'
@@ -1274,6 +1280,38 @@ check "a gateway refusal records its own phase" "1" \
 	"$(grep -c $'\tgateway-rejected$' "$AUTO_DIR/gateway-state/auto-attempt")"
 check "a gateway refusal does not pause automatic login" "false" \
 	"$([ -e "$AUTO_DIR/gateway-state/auto-paused" ] && echo true || echo false)"
+
+# What Cisco printed is kept for the next unexplained failure — and what was
+# typed is not. The fake terminal echoes the password, as a real one may.
+transcript=$AUTO_DIR/gateway-state/auto-transcript
+check "the transcript keeps the gateway's own words" "1" \
+	"$(grep -c 'No assigned address' "$transcript")"
+check "the transcript names the gateway it tried" "1" \
+	"$(grep -c $'\t== example.invalid resolves to ' "$transcript")"
+check "the transcript never holds the PIN or the one-time code" "0" \
+	"$(cut -f2- "$transcript" | grep -E -c '12345|[0-9]{5,}')"
+check "the echoed secret is visibly redacted, not silently dropped" "1" \
+	"$(grep -c '\[redacted\]' "$transcript")"
+check "the transcript is private" "600" \
+	"$(stat -f %Lp "$transcript" 2>/dev/null || stat -c %a "$transcript")"
+check "the attempt leaves a history line with where it stopped" "1" \
+	"$(grep -c $'\tauto\thost=example.invalid result=gateway-rejected reached=credentials-submitted after=' \
+		"$AUTO_DIR/gateway-state/history.log")"
+
+# The case the transcript exists for: Cisco says something no pattern knows,
+# then nothing. The attempt times out, and what Cisco said survives it.
+env "${auto_env[@]}" VPN_ETA_STATE_DIR="$AUTO_DIR/mystery-state" \
+	FAKE_VPN_MYSTERY=1 VPN_ETA_AUTO_TIMEOUT=2 VPN_ETA_TEST_STATS="$DISCONNECTED" \
+	VPN_ETA_INCIDENT_LOG=1 VPN_ETA_LOG_BIN="$FAKE_LOG" \
+	"$PLUGIN" start-auto >/dev/null
+check "an unrecognised reply still times out and pauses" "timeout" \
+	"$(cat "$AUTO_DIR/mystery-state/auto-paused" 2>/dev/null)"
+check "the unrecognised reply is in the transcript" "1" \
+	"$(grep -c 'A reply nobody has seen before' "$AUTO_DIR/mystery-state/auto-transcript")"
+check "a failed sign-in saves an incident of its own" "1" \
+	"$(find "$AUTO_DIR/mystery-state/incidents" -name '*-auto-timeout.log' | wc -l | tr -d ' ')"
+check "the incident carries the transcript beside the client's log" "1" \
+	"$(cat "$AUTO_DIR/mystery-state/incidents/"*-auto-timeout.log | grep -c 'A reply nobody has seen before')"
 
 cat >"$AUTO_DIR/security-lab" <<'FAKE'
 #!/bin/bash
@@ -1407,6 +1445,16 @@ check "the refusing gateway is retried after the backoff" "2" \
 	"$(wc -l <"$AUTO_DIR/gateway-hosts" | tr -d ' ')"
 check "a continuing outage is not announced again" "2" \
 	"$(wc -l <"$AUTO_DIR/gw-notifications" | tr -d ' ')"
+# The attempt's history line is not a state: the Disconnected already logged
+# must not be logged again because a sign-in happened in between.
+printf 'disconnected|\n' >"$AUTO_DIR/gw-state/last-event"
+before=$(grep -c $'\tdisconnected\t' "$AUTO_DIR/gw-state/history.log")
+rm -f "$AUTO_DIR/gw-state/auto-retry"
+env "${gw_env[@]}" "$PLUGIN" >/dev/null
+check "an attempt's history line does not re-log the state around it" "$before" \
+	"$(grep -c $'\tdisconnected\t' "$AUTO_DIR/gw-state/history.log")"
+check "each attempt adds its own history line" "3" \
+	"$(grep -c $'\tauto\thost=example.invalid result=gateway-rejected' "$AUTO_DIR/gw-state/history.log")"
 : >"$AUTO_DIR/gateway-hosts"
 rm -f "$AUTO_DIR/gw-state/auto-retry"
 env "${gw_env[@]}" VPN_ETA_HOST_FALLBACK=fallback.invalid "$PLUGIN" >/dev/null
@@ -1416,6 +1464,16 @@ check "the fallback's success ends the attempt" "client-connected" \
 	"$(tail -1 "$AUTO_DIR/gw-state/auto-attempt" | cut -f2)"
 check "the attempt's trace names the switch" "1" \
 	"$(grep -c $'\thost-fallback$' "$AUTO_DIR/gw-state/auto-attempt")"
+
+# The name connected to is a load balancer; the node behind it is what an outage
+# confined to one node would be diagnosed by.
+env VPN_ETA_CONFIG=/dev/null VPN_ETA_STATE_DIR="$AUTO_DIR/server-state" VPN_ETA_TEST_PERSIST=1 \
+	VPN_ETA_TEST_STATS='    Connection State:            Connected
+    Session Disconnect:          23 Hours 55 Minutes Remaining
+    Client Address (IPv4):       198.51.100.7
+    Server Address:              192.0.2.160' "$PLUGIN" >/dev/null
+check "a connected line names the gateway node" "1" \
+	"$(grep -c $'\tconnected\tremaining=1435m server=192.0.2.160$' "$AUTO_DIR/server-state/history.log")"
 out=$(env "${auto_env[@]}" VPN_ETA_HOST= VPN_ETA_STATE_DIR="$AUTO_DIR/incomplete-state" \
 	VPN_ETA_TEST_STATS="$DISCONNECTED" "$PLUGIN")
 check "missing automatic-login settings are shown in the menu" "1" \

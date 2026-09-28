@@ -68,6 +68,7 @@ INCIDENT_DIR=$STATE_DIR/incidents
 AUTO_RETRY_FILE=$STATE_DIR/auto-retry
 AUTO_PAUSE_FILE=$STATE_DIR/auto-paused
 AUTO_ATTEMPT_FILE=$STATE_DIR/auto-attempt
+AUTO_TRANSCRIPT_FILE=$STATE_DIR/auto-transcript
 
 # Prefix for the optional text countdown. Two menu-bar items showing "VPN"
 # tell you nothing, so a second gateway can be labelled "Work" or "Lab".
@@ -152,6 +153,8 @@ AUTO_RETRY_SECONDS=$(number_or "${VPN_ETA_AUTO_RETRY:-300}" 300)
 KEYCHAIN_SERVICE=${VPN_ETA_KEYCHAIN_SERVICE:-vpn-eta}
 KEYCHAIN_TIMEOUT=$(number_or "${VPN_ETA_KEYCHAIN_TIMEOUT:-10}" 10)
 [ "$KEYCHAIN_TIMEOUT" -gt 0 ] || KEYCHAIN_TIMEOUT=10
+AUTO_TIMEOUT=$(number_or "${VPN_ETA_AUTO_TIMEOUT:-45}" 45)
+[ "$AUTO_TIMEOUT" -gt 0 ] || AUTO_TIMEOUT=45
 AUTO_PROGRESS_EXPECTED_SECONDS=75
 AUTO_PROGRESS_STALE_SECONDS=300
 
@@ -232,6 +235,13 @@ connection_state() { field "Connection State:" "$1"; }
 # the clock, and the reconnect that outlives a Wi-Fi handover — the failure the
 # transition ladder exists for — arrives spelled `Reconnecting (waiting for
 # network connectivity)` and was rendered gray.
+# Which gateway node is serving the session: the name you connect to is a load
+# balancer, and an outage can be one node's.
+server_note() {
+	server=$(field "Server Address:" "$stats")
+	[ -z "$server" ] || printf ' server=%s' "$server"
+}
+
 state_word() { printf '%s\n' "${1%% (*}"; }
 
 client_address() {
@@ -549,6 +559,25 @@ record_event() {
 	return 0
 }
 
+# A line that records something done rather than a state reached: it never
+# touches the dedupe key, so the next tick's state line is judged against the
+# state before it, not against this.
+history_note() {
+	may_write_state || return 1
+	mkdir -p "$STATE_DIR" 2>/dev/null || return 1
+	event_lock
+	printf '%s\t%s\t%s\n' "$(date +%Y-%m-%dT%H:%M:%S%z)" "$1" "$2" >>"$HISTORY_FILE" 2>/dev/null
+	trim_history
+	event_unlock
+}
+
+# A failed sign-in is an incident of its own: the tunnel state it leaves behind
+# is the Disconnected already logged, so record_event would capture nothing.
+capture_auto_incident() {
+	capture_incident "auto-$1" </dev/null >/dev/null 2>&1 &
+	[ -z "${VPN_ETA_TEST_WAIT:-}" ] || wait
+}
+
 # mkdir is atomic, and a lock left by a killed run is taken over after about
 # two seconds rather than silencing the history for good.
 event_lock() {
@@ -573,14 +602,14 @@ capture_incident() {
 	# A `connected` needs no explanation; the four that follow are the ones
 	# somebody reads the history to understand.
 	case $1 in
-	transition | disconnected | down | unreadable) ;;
+	transition | disconnected | down | unreadable | auto-*) ;;
 	*) return 0 ;;
 	esac
 	[ -x "$LOG_BIN" ] || return 0
 	mkdir -p "$INCIDENT_DIR" 2>/dev/null || return 0
 	file=$INCIDENT_DIR/$(date +%Y-%m-%dT%H%M%S)-$1.log
 	"$LOG_BIN" show --last "${INCIDENT_WINDOW_MINUTES}m" \
-		--predicate 'process == "vpnagentd"' --style compact \
+		--predicate 'process == "vpnagentd" OR process == "vpn"' --style compact \
 		>"$file" 2>/dev/null
 	# The reader prints a header even when it matched nothing, so "not empty" is
 	# not the test — a file holding only that header says "nothing happened"
@@ -592,6 +621,16 @@ capture_incident() {
 		rm -f "$file"
 		return 0
 	fi
+	case $1 in
+	auto-*)
+		{
+			printf '\n== auto-attempt\n'
+			cat "$AUTO_ATTEMPT_FILE"
+			printf '\n== auto-transcript\n'
+			cat "$AUTO_TRANSCRIPT_FILE"
+		} >>"$file" 2>/dev/null
+		;;
+	esac
 	trim_incidents
 }
 
@@ -1057,12 +1096,32 @@ auto_login() {
 		VPN_ETA_AUTO_USER=$VPN_ETA_USER \
 		VPN_ETA_AUTO_KEYCHAIN=$KEYCHAIN_SERVICE \
 		VPN_ETA_AUTO_KEYCHAIN_TIMEOUT=$KEYCHAIN_TIMEOUT \
+		VPN_ETA_AUTO_TIMEOUT=$AUTO_TIMEOUT \
 		VPN_ETA_AUTO_TRACE=$AUTO_ATTEMPT_FILE \
+		VPN_ETA_AUTO_TRANSCRIPT=$AUTO_TRANSCRIPT_FILE \
 		VPN_ETA_AUTO_SECURITY=${VPN_ETA_SECURITY_BIN:-/usr/bin/security} \
 		/usr/bin/expect <<'EXPECT'
 log_user 0
-set timeout 45
+set timeout $env(VPN_ETA_AUTO_TIMEOUT)
 set answered 0
+set secrets {}
+# What Cisco printed, for the day it prints something no pattern here knows —
+# the 2026-09-28 refusal was only reconstructed from vpnagentd's log. What was
+# sent is replaced before anything reaches the disk, and so is any long run of
+# digits, in case the terminal echoed a code no secret matches.
+proc keep_output {text} {
+	catch {
+		foreach secret $::secrets {
+			if {$secret ne ""} { set text [string map [list $secret {[redacted]}] $text] }
+		}
+		regsub -all {[0-9]{5,}} $text {[digits]} text
+		set out [open $::env(VPN_ETA_AUTO_TRANSCRIPT) a]
+		foreach line [split [string map [list "\r" ""] $text] "\n"] {
+			if {[string trim $line] ne ""} { puts $out "[clock seconds]\t$line" }
+		}
+		close $out
+	}
+}
 proc trace_stage {stage} {
 	catch {
 		set trace_file [open $::env(VPN_ETA_AUTO_TRACE) a]
@@ -1073,23 +1132,36 @@ proc trace_stage {stage} {
 trace_stage client-started
 spawn -noecho $env(VPN_ETA_AUTO_VPN) connect $env(VPN_ETA_AUTO_HOST)
 expect {
-	-re {([Aa]uthentication [Ff]ailed|[Ll]ogin [Ff]ailed)} { trace_stage login-rejected; exit 13 }
-	-re {[Ss]tate:[ \t]*[Cc]onnected} { trace_stage client-connected; exit 0 }
+	-re {([Aa]uthentication [Ff]ailed|[Ll]ogin [Ff]ailed)} {
+		keep_output $expect_out(buffer)
+		trace_stage login-rejected
+		exit 13
+	}
+	-re {[Ss]tate:[ \t]*[Cc]onnected} {
+		keep_output $expect_out(buffer)
+		trace_stage client-connected
+		exit 0
+	}
 	-re {(rejected the connection attempt|No assigned address|[Cc]ould not connect to server|[Cc]onnection attempt has failed)} {
+		keep_output $expect_out(buffer)
+		catch {expect -timeout 1 -re {[^\n]*\n} { keep_output $expect_out(buffer) }}
 		trace_stage gateway-rejected
 		exit 18
 	}
 	-re {[Ss]tate:[ \t]*[Dd]isconnected} {
+		keep_output $expect_out(buffer)
 		if {$answered} { trace_stage client-disconnected; exit 14 }
 		trace_stage preauth-disconnected
 		exp_continue -continue_timer
 	}
 	-re {[Uu]sername[ \t]*:} {
+		keep_output $expect_out(buffer)
 		trace_stage username-prompt
 		send -- "$env(VPN_ETA_AUTO_USER)\r"
 		exp_continue -continue_timer
 	}
 	-re {[Pp]assword[ \t]*:} {
+		keep_output $expect_out(buffer)
 		if {$answered} { trace_stage repeated-password-prompt; exit 17 }
 		set answered 1
 		trace_stage password-prompt
@@ -1110,18 +1182,34 @@ expect {
 			printf "%06d", (unpack("N", substr($digest, $offset, 4)) & 0x7fffffff) % 1000000;
 		} << $seed} code]} { trace_stage totp-invalid; exit 12 }
 		trace_stage totp-generated
+		set secrets [list "${pin}${code}" $pin $code]
 		send -- "${pin}${code}\r"
 		trace_stage credentials-submitted
 		exp_continue -continue_timer
 	}
-	eof { trace_stage client-exited; exit 16 }
-	timeout { trace_stage timeout; exit 15 }
+	eof {
+		keep_output $expect_out(buffer)
+		trace_stage client-exited
+		exit 16
+	}
+	timeout {
+		# The case the transcript exists for: whatever Cisco said that matched
+		# nothing is still sitting in the buffer.
+		catch {expect -timeout 0 -re {.+} { keep_output $expect_out(buffer) }}
+		trace_stage timeout
+		exit 15
+	}
 }
 EXPECT
 }
 
-# One sign-in against one gateway; the result lands in auto_rc.
+# One sign-in against one gateway; the result lands in auto_rc. Each one leaves
+# a history line, so the log shows which gateway refused and at which stage,
+# beside the state changes it explains.
 run_auto_connector() {
+	connector_started=$(now_epoch)
+	printf '%s\t== %s resolves to %s\n' "$connector_started" "$1" "$(resolve_host "$1")" \
+		>>"$AUTO_TRANSCRIPT_FILE"
 	if [ -n "${VPN_ETA_AUTO_CONNECT_BIN:-}" ]; then
 		"$VPN_ETA_AUTO_CONNECT_BIN" "$1" "$VPN_ETA_USER" >/dev/null 2>&1
 		auto_rc=$?
@@ -1129,6 +1217,25 @@ run_auto_connector() {
 		auto_login "$1" >/dev/null 2>&1
 		auto_rc=$?
 	fi
+	case $auto_rc in
+	0) connector_result=connected ;;
+	18) connector_result=gateway-rejected ;;
+	*) connector_result=failed-$auto_rc ;;
+	esac
+	# The last stage the attempt reached before its verdict: "failed at
+	# credentials-submitted" and "failed at client-started" are different outages.
+	connector_stage=$(awk -F '\t' '$2 !~ /^(gateway-rejected|client-connected|login-rejected|client-disconnected|timeout|client-exited|repeated-password|host-fallback)$/ { stage = $2 } END { print stage }' \
+		"$AUTO_ATTEMPT_FILE" 2>/dev/null)
+	history_note auto "host=$1 result=${connector_result} reached=${connector_stage:-none} after=$(($(now_epoch) - connector_started))s"
+}
+
+# The addresses a gateway name resolves to right now. "Could not connect" and a
+# DNS answer pointing somewhere new look the same from the client's side.
+resolve_host() {
+	command -v dscacheutil >/dev/null 2>&1 || { echo unknown; return; }
+	addresses=$(dscacheutil -q host -a name "${1#*://}" 2>/dev/null |
+		awk '/^ip_address:/ { printf "%s%s", sep, $2; sep = "," }')
+	echo "${addresses:-nothing}"
 }
 
 # Whether the retry backoff would let a scheduled attempt start now.
@@ -1188,6 +1295,7 @@ auto_connect_session() {
 	umask 077
 	printf '%s\tattempt-started\n' "$now" >"$AUTO_ATTEMPT_FILE" || return 1
 	chmod 600 "$AUTO_ATTEMPT_FILE" || return 1
+	: >"$AUTO_TRANSCRIPT_FILE" && chmod 600 "$AUTO_TRANSCRIPT_FILE" || return 1
 	refresh_menu_bar
 	[ -n "$gateway_down_before" ] ||
 		notify "VPN connecting" "Automatic sign-in started; watch for a result notification."
@@ -1214,6 +1322,7 @@ auto_connect_session() {
 	fi
 	if [ "$auto_rc" -eq 18 ]; then
 		printf '%s\tfailed-gateway-rejected\n' "$(now_epoch)" >>"$AUTO_ATTEMPT_FILE"
+		capture_auto_incident gateway-rejected
 		[ -n "$gateway_down_before" ] ||
 			notify "VPN gateway refused the connection" \
 				"Cisco's gateway is not accepting sessions; retrying every $(mute_span $(((AUTO_RETRY_SECONDS + 59) / 60)))."
@@ -1233,6 +1342,7 @@ auto_connect_session() {
 	esac
 	printf '%s\n' "$pause_reason" >"$AUTO_PAUSE_FILE"
 	printf '%s\tfailed-%s\n' "$(now_epoch)" "$pause_reason" >>"$AUTO_ATTEMPT_FILE"
+	capture_auto_incident "$pause_reason"
 	notify "VPN automatic login paused" \
 		"Automatic sign-in stopped at ${pause_reason}. Use manual SMS or TOTP login if needed."
 	[ "$mode" = explicit ] || refresh_menu_bar
@@ -1605,7 +1715,7 @@ if [ -z "$remaining" ]; then
 	# as far as the log is concerned. No mark is announced off an extrapolated
 	# countdown: nothing may refresh the state file on this path, and a mark that
 	# cannot be written down would fire again every minute.
-	record_event connected "$(client_address "$stats")" "remaining=unreported (client sent ${reported:-nothing})"
+	record_event connected "$(client_address "$stats")" "remaining=unreported (client sent ${reported:-nothing})$(server_note)"
 	if load_state && cache_is_fresh && cache_matches_session "$(client_address "$stats")"; then
 		short=$(format_minutes "$cached_minutes")
 		render_estimated_bar "$cached_minutes" client
@@ -1639,7 +1749,7 @@ if may_write_state; then
 	marks=$(carried_marks "$total_minutes" "$address")
 	marks=$(announce_marks "$total_minutes" "$marks")
 	save_state "$total_minutes" "$address" "$marks"
-	record_event connected "$address" "remaining=${total_minutes}m"
+	record_event connected "$address" "remaining=${total_minutes}m$(server_note)"
 fi
 
 render_time_bar "$total_minutes"
