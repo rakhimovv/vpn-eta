@@ -84,8 +84,9 @@
 # ── Timing ───────────────────────────────────────────────────────────────────
 
 # Seconds to wait for the Cisco CLI before giving up on one call. The CLI talks
-# to a daemon and can hang; this is the watchdog.
-#VPN_ETA_TIMEOUT=12
+# to a daemon and can hang; this is the watchdog. A healthy call takes about a
+# second, and the menu bar shows the previous reading for as long as this waits.
+#VPN_ETA_TIMEOUT=5
 
 # How long a countdown extrapolated from the last confirmed reading stays
 # trustworthy, in minutes. Past this the plugin says it does not know rather

@@ -112,7 +112,7 @@ reads no `~/.zshrc`. A variable exported there reaches a terminal run and never 
 | `VPN_ETA_KEYCHAIN_SERVICE` | `vpn-eta` | Keychain item prefix; use a different value for a second VPN token. |
 | `VPN_ETA_KEYCHAIN_TIMEOUT` | `10` | Seconds allowed for each Keychain read during automatic login. |
 | `VPN_ETA_AUTO_TIMEOUT` | `45` | Seconds one automatic sign-in may go without a recognised answer from Cisco before it gives up and pauses. |
-| `VPN_ETA_TIMEOUT` | `12` | Seconds to wait for one CLI call. |
+| `VPN_ETA_TIMEOUT` | `5` | Seconds to wait for one CLI call. A call that runs out of time is not retried. |
 | `VPN_ETA_STALE_LIMIT` | `45` | Minutes an extrapolated countdown stays trustworthy. |
 | `VPN_ETA_TRANSITION_LIMIT` | `5` | Minutes one reconnect may run before it counts as stuck rather than settling. `0` never escalates. |
 | `VPN_ETA_TEARDOWN_GRACE` | `300` | Seconds after your own teardown during which a drop is not announced. |
@@ -295,7 +295,7 @@ profiles and the exact line to add.
 
 The `vpn` binary is there
 and something is bound to a `utun`, but the client would not say what. The line under it is
-the client's own reply, and it is the one to read: `did not answer within 12s` is a watchdog
+the client's own reply, and it is the one to read: `did not answer within 5s` is a watchdog
 firing, anything after `said:` is Cisco's own account. Run
 `/opt/cisco/secureclient/bin/vpn stats` yourself for the rest of it: 5.1.14 opens with an audit
 of its own launchd jobs, where a VPN service that never came up says so — on a working install

@@ -3,6 +3,28 @@
 Notable changes. Dates are release dates; the format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.6.1] — 2026-09-30
+
+### Fixed
+
+- The menu bar fell behind Cisco whenever Cisco's daemon stopped answering, which
+  it does while it tears a tunnel down or brings one back. A dropped tunnel kept
+  showing as connected for about 20 seconds, and after a Disconnect click the bar
+  went on showing Reconnecting for several seconds, long enough to invite a
+  second click. A call that runs out of time is no longer retried. The bar shows
+  what is already known, and SwiftBar reads again a few seconds later.
+- The CLI watchdog now also kills a call that ignores TERM. While the daemon was
+  gone, such calls ran 88 and 101 seconds past their 12-second limit.
+- A Disconnect click refreshes the menu bar at once and draws `disconnecting…`
+  until Cisco confirms.
+- A call that times out during a reconnect keeps the reconnect on the bar
+  instead of switching to "unknown".
+
+### Changed
+
+- `VPN_ETA_TIMEOUT` defaults to 5 seconds (was 12). A healthy call takes about
+  one.
+
 ## [1.6.0] — 2026-09-28
 
 ### Added

@@ -110,6 +110,15 @@ notified), `last-event` (the dedupe key that makes a per-minute plugin log one l
 *change*), `history.log`, `expected-teardown` (a disconnect the plugin itself started must
 not raise an alarm), and `muted-until` (an epoch, so the silence lifts itself rather than
 waiting to be remembered).
+Two small epoch stamps sit beside them. `disconnect-requested` marks a Disconnect click for
+60 s and turns the bar gray `disconnecting…` over whatever Cisco reports on the way down.
+Every start path clears it, and so does a disconnect Cisco refuses. `busy-refresh`
+rate-limits the follow-up refresh that a run whose `stats` call timed out schedules.
+Cisco's daemon answers no CLI call while it tears a tunnel down or brings one back
+(measured at 7–19 s, and 2 min after it gave up on 2026-09-29), so a timed-out call is
+not retried. Mid-transition it keeps the logged transition on the bar
+(`carried_transition_state`) rather than switching to "unknown". `run_vpn` passes `-k` to
+`timeout`: the CLI answers TERM by queueing an exit and waiting on the same daemon.
 `record_event` holds a short-lived `last-event.lock` directory around the key check and the
 history append: a detached sign-in's refresh and a menu click once landed in the same second and
 logged one change twice. A run that has waited about two seconds takes the lock over, so a killed run cannot
@@ -154,6 +163,10 @@ No plugin change reaches an **open** dropdown: SwiftBar does not process a
 03:21 expiry: eight refresh URLs opened between 03:21:15 and 03:21:34 were
 logged by SwiftBar as one burst only after a menu-item click closed the menu,
 so the open menu kept showing `1m remaining` over a session already renewed.
+For a menu that lagged a closed one, time each CLI call. The `vpn` process
+logs `Launched with single command 'stats'`, then `VPN state:`, then `Entering
+exit handler` per pid, in `log show` and in `incidents/`. A pid with no state
+line past `Unknown` was a call blocked on a busy daemon.
 Check SwiftBar's own log (`perform action for menu item`) before blaming a
 render path for a stale menu, and check it the same day: at 03:05 on 2026-09-28
 it held no SwiftBar line at all for 20:38–20:40 the evening before, while 27,000
@@ -210,6 +223,7 @@ make a test pass.
 | `VPN_ETA_LOG_BIN` | a fake `/usr/bin/log` — the only way to test the incident capture |
 | `VPN_ETA_SECURITY_BIN` | a fake `security` command for automatic-login fixtures |
 | `VPN_ETA_AUTO_CONNECT_BIN` | a fake automatic connector for retry and pause fixtures |
+| `VPN_ETA_BUSY_REFRESH_DELAY` | the seconds before the follow-up refresh after a timed-out call |
 | `VPN_ETA_TEST_WAIT` | makes a tick wait for the detached login or incident capture it launched |
 | `VPN_ETA_CONFIG` | the config file to source (`/dev/null` for documented defaults) |
 

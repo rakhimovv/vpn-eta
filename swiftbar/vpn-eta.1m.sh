@@ -3,12 +3,12 @@
 # <xbar.title>VPN session ETA</xbar.title>
 # <xbar.desc>Shows the server-reported time remaining in the VPN session.</xbar.desc>
 # <xbar.author>Ruslan Rakhimov</xbar.author>
-# <xbar.version>v1.6.0</xbar.version>
+# <xbar.version>v1.6.1</xbar.version>
 
 # The plugin is COPIED into SwiftBar's folder, so the installed file has no link
 # back to the tag it came from. Without this a bug report can name the macOS,
 # SwiftBar and Cisco versions and still not say which vpn-eta is running.
-VERSION=1.6.0
+VERSION=1.6.1
 
 export PATH="/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin"
 
@@ -69,6 +69,8 @@ AUTO_RETRY_FILE=$STATE_DIR/auto-retry
 AUTO_PAUSE_FILE=$STATE_DIR/auto-paused
 AUTO_ATTEMPT_FILE=$STATE_DIR/auto-attempt
 AUTO_TRANSCRIPT_FILE=$STATE_DIR/auto-transcript
+DISCONNECT_FILE=$STATE_DIR/disconnect-requested
+BUSY_REFRESH_FILE=$STATE_DIR/busy-refresh
 
 # Prefix for the optional text countdown. Two menu-bar items showing "VPN"
 # tell you nothing, so a second gateway can be labelled "Work" or "Lab".
@@ -113,7 +115,10 @@ STALE_LIMIT_MINUTES=$(number_or "${VPN_ETA_STALE_LIMIT:-45}" 45)
 # countdown on the bar is then the least useful true thing on the screen.
 # 0 switches the escalation off and leaves every transition looking routine.
 TRANSITION_LIMIT_MINUTES=$(number_or "${VPN_ETA_TRANSITION_LIMIT:-5}" 5)
-VPN_TIMEOUT_SECONDS=$(number_or "${VPN_ETA_TIMEOUT:-12}" 12)
+# A healthy `stats` exits in about 1.2 s, and while its daemon is gone the CLI
+# gives up by itself after about 9. Nothing past that is worth waiting for, and
+# the menu bar shows the previous run for as long as this one waits.
+VPN_TIMEOUT_SECONDS=$(number_or "${VPN_ETA_TIMEOUT:-5}" 5)
 
 # `history.log` records THAT the tunnel changed state; the client's own log is
 # the only place that says WHY — which gateway address a reconnect was retrying,
@@ -178,10 +183,18 @@ now_epoch() { date +%s; }
 # without ever attaching, so every call gets a watchdog. macOS ships no
 # timeout(1); the inline fallback is safe here only because the CLI spawns no
 # children of its own, so killing the direct child is the whole job.
+#
+# `-k` because a TERM is not an exit: while the daemon is gone the CLI answers
+# one by queueing its exit and waiting for the daemon too, and GNU timeout then
+# waits for it. On 2026-09-29 two `stats` calls TERMed at 12 s lived 113 s and
+# 100 s. The KILL that ends such a call is reported as 137; it is the same
+# timeout, so it is reported as one.
 run_vpn() {
 	if command -v timeout >/dev/null 2>&1; then
-		timeout "$VPN_TIMEOUT_SECONDS" "$VPN" "$@" 2>/dev/null
-		return $?
+		timeout -k 2 "$VPN_TIMEOUT_SECONDS" "$VPN" "$@" 2>/dev/null
+		rc=$?
+		[ "$rc" -ne 137 ] || rc=124
+		return "$rc"
 	fi
 	out_file=$(mktemp -t vpn-eta) || return 1
 	"$VPN" "$@" >"$out_file" 2>/dev/null &
@@ -345,6 +358,13 @@ read_stats() {
 		if [ "$stats_rc" -eq 0 ] && stats_is_readable "$stats"; then
 			return 0
 		fi
+		# A call that ran out of time met a daemon that is busy, not one the CLI
+		# failed to attach to, and the retry only waits on the same daemon: on
+		# 2026-09-30 a tunnel dropped at 20:01:52 and the tick that saw it spent
+		# its first call and its retry blocked, holding "connected" on the bar
+		# until 20:02:12. Render what is known now; a follow-up refresh reads
+		# again once the daemon is back.
+		[ "$stats_rc" -ne 124 ] || return 1
 		[ "$attempt" -lt "$attempts" ] && sleep 2
 		attempt=$((attempt + 1))
 	done
@@ -664,6 +684,87 @@ expected_teardown() {
 	stamp=$(cat "$TEARDOWN_FILE" 2>/dev/null)
 	case $stamp in '' | *[!0-9]*) return 1 ;; esac
 	[ $(($(now_epoch) - stamp)) -le "$TEARDOWN_GRACE_SECONDS" ]
+}
+
+# The Disconnect item, clicked in the last minute and not yet superseded by a
+# start. While Cisco tears the tunnel down it answers nothing, and the bar kept
+# saying Reconnecting over a session already ending: on 2026-09-30 at 20:02 that
+# drew a second click six seconds after the first. Unlike expected-teardown this
+# says what the bar should show, so every path that starts a session clears it,
+# and a re-login inside the minute is not drawn as a disconnect.
+DISCONNECT_PENDING_SECONDS=60
+
+mark_disconnect_requested() {
+	mkdir -p "$STATE_DIR" 2>/dev/null || return 0
+	now_epoch >"$DISCONNECT_FILE" 2>/dev/null
+}
+
+clear_disconnect_requested() { rm -f "$DISCONNECT_FILE" 2>/dev/null; }
+
+disconnect_pending() {
+	[ -r "$DISCONNECT_FILE" ] || return 1
+	stamp=$(cat "$DISCONNECT_FILE" 2>/dev/null)
+	case $stamp in '' | *[!0-9]*) return 1 ;; esac
+	[ $(($(now_epoch) - stamp)) -le "$DISCONNECT_PENDING_SECONDS" ]
+}
+
+render_disconnecting() {
+	render_bar off 'disconnecting…' gray 'VPN disconnecting'
+	echo "---"
+	echo "Disconnecting… | size=14"
+	echo "${1:-Waiting for Cisco to confirm} | size=12"
+	echo "---"
+	menu_actions disconnected
+}
+
+# A run that met a busy daemon rendered what it had, and nothing reads again
+# until the next scheduled tick: no network change follows the daemon coming
+# back. So ask SwiftBar once, a few seconds on. Once a minute at most, or a
+# daemon that never comes back would keep the plugin running back to back.
+BUSY_REFRESH_DELAY=$(number_or "${VPN_ETA_BUSY_REFRESH_DELAY:-5}" 5)
+
+schedule_busy_refresh() {
+	[ "${stats_rc:-0}" -eq 124 ] || return 0
+	[ -n "${SWIFTBAR:-}" ] || return 0
+	may_write_state || return 0
+	mkdir -p "$STATE_DIR" 2>/dev/null || return 0
+	stamp=$(cat "$BUSY_REFRESH_FILE" 2>/dev/null)
+	case $stamp in
+	'' | *[!0-9]*) ;;
+	*) [ $(($(now_epoch) - stamp)) -ge 60 ] || return 0 ;;
+	esac
+	now_epoch >"$BUSY_REFRESH_FILE" 2>/dev/null
+	(
+		sleep "$BUSY_REFRESH_DELAY"
+		refresh_menu_bar
+	) </dev/null >/dev/null 2>&1 &
+	[ -z "${VPN_ETA_TEST_WAIT:-}" ] || wait
+}
+
+# The state of the transition this plugin last logged, while that transition is
+# still the current event. A call that times out in the middle of a reconnect
+# says nothing new about it, and the bar should go on saying Reconnecting rather
+# than switch to "unknown": the daemon is busy precisely because it is
+# reconnecting, as it was at 21:11 on 2026-09-30 for sixteen seconds.
+carried_transition_state() {
+	case $(cat "$EVENT_FILE" 2>/dev/null) in
+	'transition|'*) ;;
+	*) return 1 ;;
+	esac
+	[ -r "$HISTORY_FILE" ] || return 1
+	carried=$(tail -n 50 "$HISTORY_FILE" | awk -F'\t' '
+		$2 == "transition" { line = $3 }
+		END {
+			if (line == "") exit
+			sub(/^state=/, "", line)
+			sub(/ for=[0-9]+m$/, "", line)
+			print line
+		}
+	')
+	case $carried in
+	Connecting* | Reconnecting* | Disconnecting*) printf '%s\n' "$carried" ;;
+	*) return 1 ;;
+	esac
 }
 
 # Minutes of silence still to run, or 1 when the alerts are live. Rounds up, so
@@ -1388,6 +1489,13 @@ render_unreadable() {
 		render_auto_progress
 		return 0
 	fi
+	# A tunnel still bound after the click is the teardown not yet finished, not
+	# a session of unknown state. With no tunnel the branch below says off, which
+	# is then simply true.
+	if disconnect_pending && any_tunnel_up; then
+		render_disconnecting "$detail"
+		return 0
+	fi
 	# Which actions the foot of the menu may offer. Only the first branch below
 	# has evidence of a session: the address the client last reported is still
 	# bound to a utun, which is what "there is something to end" means when the
@@ -1453,6 +1561,7 @@ if [ "${1-}" = --version ] || [ "${1-}" = -v ]; then
 fi
 
 if [ "${1-}" = start ]; then
+	clear_disconnect_requested
 	start_new_session
 	start_rc=$?
 	# Every exit path, not just success: a connect that failed also leaves the
@@ -1465,8 +1574,15 @@ fi
 # the item is CLICKED — before any of this has happened. The nudge that matters
 # is this one, at the end.
 if [ "${1-}" = disconnect ]; then
+	# Refreshed before the call as well as after it: the call returns in about a
+	# second, but the renders it asks for then wait on a daemon still tearing the
+	# tunnel down. The one started here reads Cisco before the teardown begins
+	# and draws the click as heard.
+	mark_disconnect_requested
+	refresh_menu_bar
 	disconnect_session
 	disconnect_rc=$?
+	[ "$disconnect_rc" -eq 0 ] || clear_disconnect_requested
 	refresh_menu_bar
 	exit "$disconnect_rc"
 fi
@@ -1493,6 +1609,7 @@ fi
 
 if [ "${1-}" = start-auto ]; then
 	if [ -z "$AUTO_CONNECT" ] || ! may_write_state; then exit 1; fi
+	clear_disconnect_requested
 	mkdir -p "$STATE_DIR" 2>/dev/null || exit 1
 	/usr/bin/lockf -t 0 -k "$STATE_DIR/auto.lock" "$0" auto-connect-now
 	auto_rc=$?
@@ -1502,7 +1619,7 @@ fi
 
 if [ "${1-}" = resume-auto ]; then
 	if [ -n "$AUTO_CONNECT" ] && may_write_state; then
-		rm -f "$AUTO_PAUSE_FILE" "$AUTO_RETRY_FILE"
+		rm -f "$AUTO_PAUSE_FILE" "$AUTO_RETRY_FILE" "$DISCONNECT_FILE"
 	fi
 	refresh_menu_bar
 	exit 0
@@ -1518,12 +1635,12 @@ if [ "${1-}" = auto-connect-now ]; then
 	exit $?
 fi
 
+stats_ok=1
 if [ "${VPN_ETA_TEST_STATS+x}" = x ]; then
 	stats=$VPN_ETA_TEST_STATS
 	stats_rc=${VPN_ETA_TEST_RC:-0}
 	if [ "$stats_rc" -ne 0 ] || ! stats_is_readable "$stats"; then
-		render_unreadable "$(unreadable_detail)"
-		exit 0
+		stats_ok=
 	fi
 else
 	if ! find_vpn; then
@@ -1533,7 +1650,20 @@ else
 		exit 0
 	fi
 
-	if ! read_stats; then
+	read_stats || stats_ok=
+fi
+
+carried_detail=
+if [ -z "$stats_ok" ]; then
+	schedule_busy_refresh
+	# Only a call that ran out of time, only while a tunnel is still bound, and
+	# never over a disconnect just asked for: each of the three means the
+	# carried transition is no longer what the daemon is busy with.
+	if [ "${stats_rc:-0}" -eq 124 ] && ! disconnect_pending && any_tunnel_up &&
+		carried=$(carried_transition_state); then
+		carried_detail=$(unreadable_detail)
+		stats="    Connection State:            $carried"
+	else
 		render_unreadable "$(unreadable_detail)"
 		exit 0
 	fi
@@ -1547,6 +1677,29 @@ bare_state=$(state_word "$state")
 # reliable than an ETA derived from the uptime of a long-lived daemon — but it
 # is optional, so its absence says nothing about whether the tunnel is up.
 remaining=$(session_remaining "$stats")
+
+# The click was heard: say so over whatever Cisco still reports on the way down.
+# A transition is logged first, like any other, so the history keeps the
+# teardown's own states; a Connected reading is the session being ended, and
+# its identity has not changed since the last tick logged it.
+if disconnect_pending; then
+	case $bare_state in
+	Reconnecting | Disconnecting)
+		# A transition already under way keeps its identity, so it is not
+		# logged twice; one that starts here is logged as it would be below.
+		case $(cat "$EVENT_FILE" 2>/dev/null) in
+		'transition|'*) ;;
+		*) record_event transition "$(now_epoch)" "state=$state for=0m" || : ;;
+		esac
+		render_disconnecting
+		exit 0
+		;;
+	Connected)
+		render_disconnecting
+		exit 0
+		;;
+	esac
+fi
 
 if [ -n "$AUTO_CONNECT" ] && [ ! -e "$AUTO_PAUSE_FILE" ] && [ -z "$remaining" ]; then
 	case $bare_state in
@@ -1612,6 +1765,10 @@ if [ -z "$remaining" ]; then
 			# mid-qualifier there. The menu behind it carries the whole thing.
 			[ -n "$stuck" ] && announce_stuck "$bare_state" "$transition_minutes"
 		fi
+		# The transition above was carried over a call that timed out, so the
+		# menu says what it is standing on.
+		detail_row=
+		[ -z "$carried_detail" ] || detail_row="${carried_detail} | size=12"
 		have_cache=
 		load_state && have_cache=1
 		if [ -n "$have_cache" ] && cache_is_fresh; then
@@ -1644,6 +1801,7 @@ if [ -z "$remaining" ]; then
 				echo "No countdown yet for this session | size=12"
 			fi
 		fi
+		[ -z "$detail_row" ] || echo "$detail_row"
 		echo "---"
 		menu_actions active
 		exit 0

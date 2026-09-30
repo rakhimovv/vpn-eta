@@ -258,10 +258,10 @@ check "and the detail stays a single menu item" "1" \
 # The watchdog fired: the reply is not the evidence, its absence is.
 out=$(VPN_ETA_TEST_STATS=$CONNECTED VPN_ETA_TEST_RC=124 "$PLUGIN")
 check "a timed-out call blames the clock, not the reply" "true" \
-	"$(printf '%s\n' "$out" | grep -q 'did not answer within 12s' && echo true || echo false)"
+	"$(printf '%s\n' "$out" | grep -q 'did not answer within 5s' && echo true || echo false)"
 check "and the timeout wording follows the configured limit" "true" \
-	"$(env VPN_ETA_TIMEOUT=5 VPN_ETA_TEST_STATS="$CONNECTED" VPN_ETA_TEST_RC=124 "$PLUGIN" |
-		grep -q 'did not answer within 5s' && echo true || echo false)"
+	"$(env VPN_ETA_TIMEOUT=9 VPN_ETA_TEST_STATS="$CONNECTED" VPN_ETA_TEST_RC=124 "$PLUGIN" |
+		grep -q 'did not answer within 9s' && echo true || echo false)"
 
 # Nothing at all is its own diagnosis and must not be dressed as a quotation.
 out=$(VPN_ETA_TEST_STATS='' "$PLUGIN")
@@ -641,7 +641,8 @@ check "the dropdown keeps the full countdown under compact" "23h 53m remaining �
 reset_session_state() {
 	rm -f "$STATE_DIR/last-session" "$STATE_DIR/last-event" \
 		"$STATE_DIR/history.log" "$STATE_DIR/expected-teardown" \
-		"$STATE_DIR/muted-until" "$NOTIFY_SINK"
+		"$STATE_DIR/muted-until" "$STATE_DIR/disconnect-requested" \
+		"$STATE_DIR/busy-refresh" "$NOTIFY_SINK"
 	rm -rf "$STATE_DIR/incidents"
 }
 
@@ -1066,6 +1067,105 @@ run_disconnect connected SWIFTBAR=1 SWIFTBAR_PLUGIN_PATH=/somewhere/vpn-eta.1m.s
 	VPN_ETA_REFRESH_SINK="$REFRESH_SINK" >/dev/null
 check "a finished disconnect asks SwiftBar to read again" \
 	"swiftbar://refreshplugin?name=vpn-eta" "$(tail -1 "$REFRESH_SINK")"
+# And before the call too: the renders asked for afterwards wait on a daemon
+# still tearing the tunnel down, and the click has to show before they return.
+check "and one before the call, so the click shows at once" "2" \
+	"$(grep -c . "$REFRESH_SINK" | tr -d ' ')"
+
+# Cisco still reports the session in the first seconds after the click; the bar
+# says the click was heard rather than drawing the session as if nothing happened.
+check "a session still reported right after the click reads as ending" \
+	"VPN disconnecting… | color=gray" \
+	"$(first_line "$(VPN_ETA_TEST_STATS=$CONNECTED VPN_ETA_TEST_PERSIST=1 "$PLUGIN")")"
+check "and so does a transition on the way down" "VPN disconnecting… | color=gray" \
+	"$(first_line "$(VPN_ETA_TEST_STATS='    Connection State:            Disconnecting' \
+		VPN_ETA_TEST_PERSIST=1 "$PLUGIN")")"
+check "which is still logged" "transition" "$(last_event)"
+# A new session started inside that minute is not drawn as a disconnect.
+run_start "" disconnected >/dev/null
+check "a start clears the pending disconnect" "false" \
+	"$([ -e "$STATE_DIR/disconnect-requested" ] && echo true || echo false)"
+# A refused disconnect leaves the session running, and the bar must say so.
+reset_session_state
+run_disconnect connected FAKE_VPN_DISCONNECT_RC=1 >/dev/null
+check "a refused disconnect is not drawn as one under way" "false" \
+	"$([ -e "$STATE_DIR/disconnect-requested" ] && echo true || echo false)"
+
+# ---------------------------------------------------------------------------
+# A busy daemon. While Cisco tears a tunnel down or brings one back it answers
+# no CLI call, and the bar shows the previous run for as long as this one waits.
+# The stand-in ignores TERM the way the real CLI queues its exit, so only the
+# watchdog's KILL ends it.
+
+cat >"$FAKE_DIR/vpn-busy" <<'FAKE'
+#!/bin/bash
+printf '%s\n' "$*" >>"$FAKE_VPN_DIR/busy-log"
+trap '' TERM
+exec sleep 30
+FAKE
+chmod +x "$FAKE_DIR/vpn-busy"
+
+# $@ extra environment. Prints the plugin's output.
+run_busy() {
+	: >"$FAKE_DIR/busy-log"
+	env -u SWIFTBAR -u SWIFTBAR_PLUGIN_PATH "$@" VPN_ETA_VPN_BIN="$FAKE_DIR/vpn-busy" \
+		VPN_ETA_TIMEOUT=1 VPN_ETA_TEST_IFCONFIG="$TUNNEL_UP" "$PLUGIN"
+}
+busy_calls() { grep -c . "$FAKE_DIR/busy-log" | tr -d ' '; }
+
+reset_session_state
+seed_cache 60
+: >"$REFRESH_SINK"
+busy_started=$(date +%s)
+out=$(run_busy SWIFTBAR=1 SWIFTBAR_PLUGIN_PATH=/somewhere/vpn-eta.1m.sh \
+	VPN_ETA_REFRESH_SINK="$REFRESH_SINK" VPN_ETA_BUSY_REFRESH_DELAY=0 VPN_ETA_TEST_WAIT=1)
+busy_took=$(($(date +%s) - busy_started))
+check "a CLI that ignores TERM is still ended by the watchdog" "true" \
+	"$([ "$busy_took" -le 6 ] && echo true || echo false)"
+check "and a timed-out call is not retried" "1" "$(busy_calls)"
+check "a busy daemon with a tunnel up is never drawn as off" "VPN 2h 59m | color=orange" \
+	"$(first_line "$out")"
+check "and a follow-up refresh reads again once it is back" \
+	"swiftbar://refreshplugin?name=vpn-eta" "$(tail -1 "$REFRESH_SINK")"
+run_busy SWIFTBAR=1 SWIFTBAR_PLUGIN_PATH=/somewhere/vpn-eta.1m.sh \
+	VPN_ETA_REFRESH_SINK="$REFRESH_SINK" VPN_ETA_BUSY_REFRESH_DELAY=0 VPN_ETA_TEST_WAIT=1 >/dev/null
+check "but only once a minute, however long it stays busy" "1" \
+	"$(grep -c . "$REFRESH_SINK" | tr -d ' ')"
+
+# A call that times out in the middle of a reconnect says nothing new about it.
+reset_session_state
+seed_cache 60
+printf 'transition|%s\n' "$(($(date +%s) - 30))" >"$STATE_DIR/last-event"
+printf '2026-09-30T21:10:42+0300\ttransition\tstate=Reconnecting (waiting for network connectivity) for=0m\n' \
+	>"$STATE_DIR/history.log"
+out=$(run_busy)
+check "a busy daemon mid-reconnect keeps the reconnect on the bar" "VPN 2h 59m… | color=orange" \
+	"$(first_line "$out")"
+check "with the state it was last seen in" "true" \
+	"$(printf '%s\n' "$out" | grep -q '^Reconnecting (waiting for network connectivity)… |' &&
+		echo true || echo false)"
+check "and says the call timed out" "true" \
+	"$(printf '%s\n' "$out" | grep -q 'did not answer within 1s' && echo true || echo false)"
+check "and logs nothing new" "1" "$(history_lines)"
+
+# The same busy daemon right after the Disconnect click is the teardown itself.
+reset_session_state
+seed_cache 60
+date +%s >"$STATE_DIR/disconnect-requested"
+check "a busy daemon after the click reads as disconnecting" "VPN disconnecting… | color=gray" \
+	"$(first_line "$(run_busy)")"
+rm -f "$STATE_DIR/disconnect-requested"
+
+# The retries were written for a reply that never attached, and still apply.
+cat >"$FAKE_DIR/vpn-silent" <<'FAKE'
+#!/bin/bash
+printf '%s\n' "$*" >>"$FAKE_VPN_DIR/busy-log"
+FAKE
+chmod +x "$FAKE_DIR/vpn-silent"
+reset_session_state
+: >"$FAKE_DIR/busy-log"
+VPN_ETA_VPN_BIN="$FAKE_DIR/vpn-silent" VPN_ETA_TEST_IFCONFIG="$TUNNEL_UP" "$PLUGIN" >/dev/null
+check "an empty reply is still asked three times" "3" "$(busy_calls)"
 
 # ---------------------------------------------------------------------------
 # Muting the alerts. A mute is a deadline rather than a switch, so when it lifts
